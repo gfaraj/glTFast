@@ -120,6 +120,14 @@ namespace GLTFast {
         /// <returns>True if glTF-binary, False if glTF (JSON), null if not sure.</returns>
         public static bool? IsGltfBinary( Uri uri ) {
             string path = uri.IsAbsoluteUri ? uri.LocalPath : uri.OriginalString;
+            var result = IsGltfBinary(path);
+            if (result == null && uri.IsAbsoluteUri)
+                result = IsGltfBinary(uri.OriginalString);
+
+            return result;
+        }
+
+        internal static bool? IsGltfBinary(string path) {
             var index = path.LastIndexOf('.',path.Length-1, Mathf.Min(5,path.Length) );
             if(index<0) return null;
             if(path.EndsWith(GltfGlobals.glbExt, StringComparison.OrdinalIgnoreCase)) {
