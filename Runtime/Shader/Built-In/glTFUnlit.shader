@@ -66,6 +66,7 @@ SubShader {
                 float4 vertex : SV_POSITION;
                 float2 texcoord : TEXCOORD0;
                 fixed4 color : COLOR;
+                float pointSize : PSIZE;
                 UNITY_FOG_COORDS(1)
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -79,7 +80,13 @@ SubShader {
                 o.texcoord = TexCoordsSingle((_MainTexUVChannel==0)?v.texcoord0:v.texcoord1, _MainTex);
 
                 UNITY_TRANSFER_FOG(o,o.vertex);
+#ifdef UNITY_COLORSPACE_GAMMA
+                o.color.rgb = LinearToGammaSpace(v.color.rgb);
+                o.color.a = v.color.a;
+#else
                 o.color = v.color;
+#endif
+                o.pointSize = 1;
                 return o;
             }
 

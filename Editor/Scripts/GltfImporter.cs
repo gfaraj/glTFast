@@ -15,9 +15,26 @@
 
 #if !GLTFAST_EDITOR_IMPORT_OFF
 
+// glTFast is on the path to being official, so it should have highest priority as importer by default
+// This ifdef is included for completeness.
+// Other glTF importers should specify this via AsmDef dependency, for example
+// `com.atteneder.gltfast@3.0.0: HAVE_GLTFAST` and then checking here `#if HAVE_GLTFAST`
+#if false 
+#define ANOTHER_IMPORTER_HAS_HIGHER_PRIORITY
+#endif
+
+#if !ANOTHER_IMPORTER_HAS_HIGHER_PRIORITY && !GLTFAST_FORCE_DEFAULT_IMPORTER_OFF
+#define ENABLE_DEFAULT_GLB_IMPORTER
+#endif
+#if GLTFAST_FORCE_DEFAULT_IMPORTER_ON
+#define ENABLE_DEFAULT_GLB_IMPORTER
+#endif
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using GLTFast.Logging;
+using GLTFast.Utils;
 using UnityEditor;
 #if UNITY_2020_2_OR_NEWER
 using UnityEditor.AssetImporters;
@@ -30,8 +47,12 @@ using Object = UnityEngine.Object;
 
 namespace GLTFast.Editor {
 
+#if ENABLE_DEFAULT_GLB_IMPORTER
     [ScriptedImporter(1,new [] {"gltf","glb"})] 
-    public class GltfImporter : ScriptedImporter {
+#else
+    [ScriptedImporter(1, null, overrideExts: new[] { "gltf","glb" })]
+#endif
+    class GltfImporter : ScriptedImporter {
 
         [SerializeField]
         EditorImportSettings editorImportSettings;
@@ -82,7 +103,9 @@ namespace GLTFast.Editor {
                 // Design-time import specific changes to default settings
                 importSettings = new ImportSettings {
                     // Avoid naming conflicts by default
-                    nodeNameMethod = ImportSettings.NameImportMethod.OriginalUnique
+                    nodeNameMethod = ImportSettings.NameImportMethod.OriginalUnique,
+                    generateMipMaps = true,
+                    animationMethod = ImportSettings.AnimationMethod.Mecanim,
                 };
             }
             
@@ -120,7 +143,9 @@ namespace GLTFast.Editor {
                 
                 for (var i = 0; i < m_Gltf.materialCount; i++) {
                     var mat = m_Gltf.GetMaterial(i);
-                    AddObjectToAsset(ctx, $"materials/{mat.name}", mat);
+                    if (mat != null) {
+                        AddObjectToAsset(ctx, $"materials/{mat.name}", mat);
+                    }
                 }
 
                 if (m_Gltf.defaultMaterial != null) {
@@ -133,6 +158,9 @@ namespace GLTFast.Editor {
                 var meshes = m_Gltf.GetMeshes();
                 if (meshes != null) {
                     foreach (var mesh in meshes) {
+                        if (mesh == null) {
+                            continue;
+                        }
                         if (editorImportSettings.generateSecondaryUVSet && !HasSecondaryUVs(mesh)) {
                             Unwrapping.GenerateSecondaryUVSet(mesh);
                         }
@@ -144,6 +172,9 @@ namespace GLTFast.Editor {
                 var clips = m_Gltf.GetAnimationClips();
                 if (clips != null) {
                     foreach (var animationClip in clips) {
+                        if (animationClip == null) {
+                            continue;
+                        }
                         if (importSettings.animationMethod == ImportSettings.AnimationMethod.Mecanim) {
                             var settings = AnimationUtility.GetAnimationClipSettings(animationClip);
                             settings.loopTime = true;
@@ -196,11 +227,15 @@ namespace GLTFast.Editor {
             assetDependencies = deps.ToArray();
 
             var reportItemList = new List<LogItem>();
-            if (logger.items != null) {
-                reportItemList.AddRange(logger.items);
+            if (logger.Count > 0) {
+                reportItemList.AddRange(logger.Items);
             }
-            if (instantiationLogger?.items != null) {
-                reportItemList.AddRange(instantiationLogger.items);
+            if (instantiationLogger?.Items != null) {
+                reportItemList.AddRange(instantiationLogger.Items);
+            }
+
+            if (reportItemList.Any(x => x.type == LogType.Error || x.type == LogType.Exception)) {
+                Debug.LogError($"Failed to import {assetPath} (see inspector for details)", this);
             }
             reportItems = reportItemList.ToArray();
         }

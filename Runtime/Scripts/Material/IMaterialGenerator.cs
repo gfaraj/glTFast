@@ -13,8 +13,13 @@
 // limitations under the License.
 //
 
-namespace GLTFast {
+namespace GLTFast.Materials {
+    using Logging;
     using Schema;
+    
+    /// <summary>
+    /// Provides a mechanism to convert glTF materials into Unity Materials
+    /// </summary>
     public interface IMaterialGenerator {
 
         /// <summary>
@@ -25,11 +30,11 @@ namespace GLTFast {
 
         /// <summary>
         /// Converts a glTF material into a Unity <see cref="Material"/>.
-        /// <see cref="gltfMaterial"/> might reference textures, which can be queried from <see cref="gltf"/>
+        /// <cref>gltfMaterial</cref> might reference textures, which can be queried from <cref>gltf</cref>
         /// </summary>
         /// <param name="gltfMaterial">Source glTF material</param>
         /// <param name="gltf">Interface to a loaded glTF's resources (e.g. textures)</param>
-        /// <returns></returns>
+        /// <returns>Generated Unity Material</returns>
         UnityEngine.Material GenerateMaterial(Material gltfMaterial, IGltfReadable gltf);
 
         /// <summary>

@@ -15,6 +15,9 @@
 
 namespace GLTFast.Schema {
 
+    /// <summary>
+    /// Metadata about the glTF asset.
+    /// </summary>
     [System.Serializable]
     public class Asset {
         /// <summary>
@@ -37,7 +40,7 @@ namespace GLTFast.Schema {
         /// </summary>
         public string minVersion;
         
-        public void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             writer.OpenBrackets();
             if (!string.IsNullOrEmpty(version)) {
                 writer.AddProperty("version", version);

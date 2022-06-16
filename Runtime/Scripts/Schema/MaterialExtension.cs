@@ -15,15 +15,34 @@
 
 namespace GLTFast.Schema {
 
+    /// <summary>
+    /// Material extensions.
+    /// </summary>
     [System.Serializable]
     public class MaterialExtension {
+        
+        // Names are identical to glTF specified property names, that's why
+        // inconsistent names are ignored.
+        // ReSharper disable InconsistentNaming
+        
+        /// <inheritdoc cref="PbrSpecularGlossiness"/>
         public PbrSpecularGlossiness KHR_materials_pbrSpecularGlossiness;
+
+        /// <inheritdoc cref="PbrSpecularGlossiness"/>
         public MaterialUnlit KHR_materials_unlit;
+        
+        /// <inheritdoc cref="PbrSpecularGlossiness"/>
         public Transmission KHR_materials_transmission;
+        
+        /// <inheritdoc cref="PbrSpecularGlossiness"/>
         public ClearCoat KHR_materials_clearcoat;
+        
+        /// <inheritdoc cref="PbrSpecularGlossiness"/>
         public Sheen KHR_materials_sheen;
         
-        public void GltfSerialize(JsonWriter writer) {
+        // ReSharper restore InconsistentNaming
+        
+        internal void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             if(KHR_materials_pbrSpecularGlossiness!=null) {
                 writer.AddProperty("KHR_materials_pbrSpecularGlossiness");

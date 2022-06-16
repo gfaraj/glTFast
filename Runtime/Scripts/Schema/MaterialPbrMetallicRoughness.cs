@@ -33,6 +33,9 @@ namespace GLTFast.Schema {
         /// </summary>
         public float[] baseColorFactor = {1,1,1,1};
 
+        /// <summary>
+        /// Base color of the material in linear color space.
+        /// </summary>
         public Color baseColor {
             get =>
                 new Color(
@@ -83,7 +86,7 @@ namespace GLTFast.Schema {
         /// </summary>
         public TextureInfo metallicRoughnessTexture;
 
-        public void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             if (baseColorFactor != null && (
                 math.abs(baseColorFactor[0] - 1f) > Constants.epsilon ||

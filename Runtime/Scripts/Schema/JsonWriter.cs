@@ -14,12 +14,13 @@
 //
 
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using UnityEngine;
 
 namespace GLTFast.Schema {
-    
-    public class JsonWriter {
+
+    class JsonWriter {
         
         StreamWriter m_Stream;
 
@@ -75,7 +76,7 @@ namespace GLTFast.Schema {
             AddArray(name);
             foreach (var value in values) {
                 Separate();
-                m_Stream.Write(value.ToString("R"));
+                m_Stream.Write(value.ToString("R", CultureInfo.InvariantCulture));
             }
             CloseArray();
         }
@@ -97,6 +98,14 @@ namespace GLTFast.Schema {
             m_Stream.Write(name);
             m_Stream.Write("\":");
             m_Stream.Write(value.ToString());
+        }
+
+        public void AddProperty(string name, float value) {
+            Separate();
+            m_Stream.Write('"');
+            m_Stream.Write(name);
+            m_Stream.Write("\":");
+            m_Stream.Write(value.ToString("R", CultureInfo.InvariantCulture));
         }
         
         public void AddProperty(string name, string value) {

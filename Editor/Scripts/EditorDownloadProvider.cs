@@ -24,7 +24,7 @@ namespace GLTFast.Editor {
     
     using Loading;
 
-    public class EditorDownloadProvider : IDownloadProvider {
+    class EditorDownloadProvider : IDownloadProvider {
 
         public List<GltfAssetDependency> assetDependencies = new List<GltfAssetDependency>();
         
@@ -55,10 +55,15 @@ namespace GLTFast.Editor {
         }
     }
 
-    public class SyncFileLoader : IDownload {
+    class SyncFileLoader : IDownload {
         public SyncFileLoader(Uri url) {
             var path = url.OriginalString;
-            data = UnityEngine.Windows.File.ReadAllBytes(path);
+            if (File.Exists(path)) {
+                data = File.ReadAllBytes(path);
+            }
+            else {
+                error = $"Cannot find resource at path {path}";
+            }
         }
         
         public object Current => null;
@@ -82,7 +87,7 @@ namespace GLTFast.Editor {
         }
     }
     
-    public class SyncTextureLoader : SyncFileLoader, ITextureDownload {
+    class SyncTextureLoader : SyncFileLoader, ITextureDownload {
         
         public Texture2D texture { get; }
 

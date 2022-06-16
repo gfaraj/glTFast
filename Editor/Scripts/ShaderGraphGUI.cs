@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-#if USING_URP || USING_HDRP
+#if USING_URP || USING_HDRP || (UNITY_SHADER_GRAPH_12_OR_NEWER && GLTFAST_BUILTIN_SHADER_GRAPH)
 #define GLTFAST_SHADER_GRAPH
 #endif
 
@@ -24,7 +24,7 @@ using static GLTFast.Materials.MaterialGenerator;
 
 namespace GLTFast.Editor
 {
-    public class ShaderGraphGUI : ShaderGUIBase
+    class ShaderGraphGUI : ShaderGUIBase
     {
 
         private UvTransform? uvTransform;

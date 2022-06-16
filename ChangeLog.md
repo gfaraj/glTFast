@@ -4,12 +4,164 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0-pre]
+### Added
+- `settings` parameter to `GameObjectBoundsInstantiator`'s constructor
+### Changed
+- Converted a lot of unintentionally public classes, types and properties to internal ones
+- Replaced `CollectingLogger.item` with `.Count` and `.Items` iterator
+- Moved logging related code into `GLTFast.Logging` namespace
+- Renamed `Schema.RootChild` to `Schema.NamedObject` and made it abstract
+### Removed
+- Obsolete code
+  - `GltfImport.Destroy` (was renamed to `GltfImport.Dispose`)
+  - `GLTFast.GltFast` (was renamed to `GltfImport`)
+  - `GltfImport.InstantiateGltf` (was replaced by `InstantiateMainScene` and `InstantiateScene`)
+  - `GltfImport.Destroy` (was renamed to `Dispose`)
+  - Remains of Basis Universal extension draft state
+    - `Schema.Image.extensions`
+    - `Schema.Image.ImageExtension`
+    - `Schema.Image.ImageKtx2`
+
 ## [Unreleased]
+### Added
+- (Import) Support for lights via KHR_lights_punctual extension (#17)
+- (Import) Exclude/include certain features (e.g. camera, animation, lights) via `InstantiationSettings.mask` (of type `ComponentType`)
+- DOTS instantiation settings support
+### Changed
+- Converted  `GameObjectInstantiator.Settings` to `InstantiationSettings`
+- Removed `RenderPipelineUtils.DetectRenderPipeline` in favor of `RenderPipelineUtils.renderPipeline`
+- Additional methods/properties (e.g. from class `GameObjectInstantiator`) are virtual, so they can be overriden
+### Fixed
+- Shader graphs' BaseColor, BaseColorTexture and vertex color calculations are now in correct color space
+
+## [4.8.2] - 2022-06-15
+### Changed
+- Load textures/images, even when not referenced by material (#418)
+### Fixed
+- glTFs without nodes (#417)
+
+## [4.8.1] - 2022-06-10
+### Changed
+- Bumped Burst dependency version to 1.6.6
+### Fixed
+- UWP build (#400)
+- Shader compile errors in  2021.2 and later due to incorrectly named property in shader graph `glTF-pbrSpecularGlossiness-Opaque-double`
+
+## [4.8.0] - 2022-05-30
+### Added
+- A target layer can be defined for instantiated GameObjects via `GameObjectInstantiator.Settings.layer` (thanks [Krzysztof Lesiak][Holo-Krzysztof] for #393)
+- Re-normalize bone weights (always for design-time import and opt-in at runtime via `GLTFAST_SAFE` scripting define)
+- `GltfAssetBase.Dispose` for releasing resources
+### Changed
+- Mecanim (non-legacy) is now the default for importing animation clips at design-time (thanks [@hybridherbst][hybridherbst] for #388)
+- All four bone weights are imported at design-time, regardless of quality setting
+- SkinnedMeshRenderer's rootBone property is now set to the lowest common ancestor node of all joints. This enables future culling optimization (see #301)
+### Fixed
+- Fail more gracefully when parsing invalid JSON
+- Proper error handling on glTF-binary files with invalid chunks (unknown type or invalid length; #389)
+- Properly handle skins without inverse bind matrices
+- Avoid loading Jpeg/PNG textures twice when they are sampled linearly or mipmaps are generated
+
+## [4.7.0] - 2022-04-25
+### Added
+- `RenderPipelineUtils` to detect current render pipeline
+- Option to make glTFast an alternative `.glb`/`.gltf` importer (not default anymore; via scripting define `GLTFAST_FORCE_DEFAULT_IMPORTER_OFF`). Useful in projects where you have another default importer for glTF (thanks [@hybridherbst][hybridherbst] for #367)
+- Prefabs `glTF-StableFramerate` and `glTF-FastestLoading` for easy, no-code setup of global runtime loading behavior (via `IDeferAgent`)
+- `GltfImport.SetDefaultDeferAgent` and `GltfImport.UnsetDefaultDeferAgent` for setup of global runtime loading behavior (via `IDeferAgent`)
+- `TimeBudgetPerFrameDeferAgent` component now has a `frameBudget` property with a nice slider in the inspector
+- `UninterruptedDefaultDeferAgent`, a Monobehavior wrapping `UninterruptedDeferAgent`
+### Changed
+- (DOTS) Update to Entities 0.50
+- (DOTS) Removed unused `GltfComponent`
+- Bumped Mathematics and Burst package dependency versions to current 2019 LTS verified versions
+- Renamed `UniveralRPMaterialGenerator` to `UniversalRPMaterialGenerator` (typo)
+### Fixed
+- Using correct file API for reading bytes in `EditorDownloadProvider` (thanks [@hybridherbst][hybridherbst] for #360)
+- GUID conflict with UnityGLTF
+- (Export) Correct float serialization on systems with non-English culture configuration (relates to #335)
+- Documentation link in error message about missing shaders (#368)
+- Slow loading after scene loading due to reference to destroyed default `IDeferAgent` (#165)
+- (Import) Better error handling when textures are missing
+- (Export) Remember destination path when exporting individual GameObjects from menu
+- (Export) Vertical texture transform offset is correct now
+- Improved relative file path handling on platforms with non-forward slash directory separator (Windows)
+- (Import) Draco compressed meshes' submeshes now have bounds set from the accessor's min/max values (just like regular/uncompressed meshes; #384)
+- (Export) De-duplication by properly re-using glTF `mesh` if accessors and materials are identical (#364)
+- (Export) Removed error messages about non-matching Profiler calls (#357)
+- (Export) Re-encoded (blitted) textures are in correct sRGB color space, even when the project is in linear color space (#353)
+- (Export) Removed incorrect color space conversion on normal maps (#346)
+- For projects using the built-in render pipeline in gamma color space, vertex colors are now applied in the correct color space
+
+## [4.6.0] - 2022-02-23
+### Added
+- (Export) Runtime glTF export to files
+- (Export) Export for Unity versions older than 2020.2
+- (Export) Save to `System.IO.Stream`
+- (Export) Occlusion map support
+- (Export) Metallic-gloss map support (converted to roughness-metallic)
+- (Export) Combine multiple maps to single occlusion-roughness-metallic map
+- (Export) Emission support
+- (Export) Correct texture filter and wrap modes by creating glTF `sampler`
+- (Export) Support for injecting custom material conversion via `IMaterialExport`
+- (Documentation) XML documentation comments on many types
+- (Documentation) Initial setup for DocFX generator
+### Changed
+- glTF export menu entries moved from `File -> Export` to
+  - `File -> Export Scene` to export the active scene
+  - `Assets -> Export glTF` for assets (may also be accessed from project view context menu)
+  - `GameObject -> Export glTF` for GameObjects (may also be accessed from hierarchy view context menu)
+- (Documentation) Split up monolithic docs into multiple markdown files
+- (Documentation) Changelog links to code are now `xref` (for DocFX)
+### Removed
+- Converted a lot of unintentionally public classes, types and properties to internal ones
+- `StopWatch`, a class used for measuring load times in tests, was moved to a dedicated test repository
+### Fixed
+- Point meshes are rendered consistently on more platforms (iOS, Vulkan) due to explicitely setting `PSIZE` (thanks [Kim Wonkee][wonkee-kim] for #309)
+- Removed Editor markup resources from builds
+- Misformated XML documentation comments
+- Correct render pipeline detection in case of quality settings override
+- (Documentation) Many minor fixes like XML doc linter errors/warnings
+- (Export) Removed redundant texture entries in glTF schema
+- (Export) Properly closing buffer file stream
+- (Export) Conflict of textures with identical names
+- (Export) Exporting assets/prefabs from project view created empty glTFs
+- (Export) Correct float array serialization on systems with non-english culture configuration (#335)
+- Textures are not duplicated anymore if they use different samplers resulting in equal Unity settings (saves memory on corner-case glTFs)
+- (Export) Various material fixes and improvements
+- (Import) First-time imports work now, because it is ensured that the shaders are loaded correctly (#315)
+- (Import) HDRP >= 10.0: Alpha blended materials are not invisible anymore
+- (Import) URP >= 12.0: Alpha masked materials are correctly alpha tested now
+- (Import) URP >= 12.0: Alpha blended `pbrMetallicRougness` materials are correctly blended now
+- (Import) Improved error logs in Editor imports
+- 2019 HDRP compiler errors
+- Correct bounds calculation of meshes with normalized position accessors (applies for most quantized meshes; #323)
+- Removed precausious error message (#281)
+
+## [4.5.0] - 2022-01-24
+### Added
+- Generic shader graphs (to reduce the amount of shader graphs to maintain and reduce shader variants)
+  - `glTF-pbrMetallicRoughness`
+  - `glTF-pbrSpecularGlossiness`
+  - `glTF-unlit`
+### Changed
+- The new, generic shader graphs are used for
+  - Universal render pipe 12 or newer
+  - High-Definition render pipe 10 or newer
+  - Optional/Experimental for the Built-In render pipe (see [Shader Graphs and the Built-In Render Pipeline](xref:doc-project-setup#shader-graphs-and-the-built-in-render-pipeline) in the documentatoin for details)
+### Fixed
+- Correct emission in HDRP 12 and later
+- (Shader Graph) Vertex color alpha channel is used properly
+- (Shader Graph) Correct vertex colors when project uses linear color space
+- (Shader Graph) Emission is now in correct color space
+
+## [4.4.11] - 2022-01-24
 ### Changed
 - `SkinnedMeshRenderer` created by the `GameObjectInstantiator` will have `updateWhenOffscreen` set to *true* to avoid culling issues (at a performance cost; #301)
 - (Editor Import): Imported Mecanim AnimationClips now have Loop Time set to true (fixes #291)
 ### Fixed
 - Improved skin deformation on unorderd-joints-glTFs in projects with `Skin Weights` (quality setting) below 4 (#294)
+- Textures are not duplicated anymore if they reference different samplers with equal settings (yields huge memory savings, depending on some glTFs; thanks [Vadim Andriyanov][Battlehub0x] for #304)
 
 ## [4.4.10] - 2022-01-14
 ### Changed
@@ -91,7 +243,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Import of glTFs with no meshes (#257)
 
-## [4.3.3] - 2021-10-15 
+## [4.3.3] - 2021-10-15
 ### Fixed
 - Corrected mesh bounds (calculated from accessor's min/max)
 - No errors when importing empty scenes
@@ -201,7 +353,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GPU instancing via [`EXT_mesh_gpu_instancing` glTF extension](https://github.com/KhronosGroup/glTF/blob/master/extensions/2.0/Vendor/EXT_mesh_gpu_instancing/README.md) (#107).
 - Camera support (via `IInstantiator.AddCamera`; #12)
 ### Changed
-- Coordinate space conversion from glTF's right-handed to Unity's left-handed system changed. Please see the [upgrade guide](./Documentation~/glTFast.md#upgrade-to-4.x) for details and the motivation behind it.
+- Coordinate space conversion from glTF's right-handed to Unity's left-handed system changed. Please see the [upgrade guide](xref:doc-upgrade-guides#upgrade-to-4x) for details and the motivation behind it.
 - Nodes' names are made unique (within their hierarchical position) by supplementing a continuous number. This is required for correct animation target lookup and import continuity.
 - `IInstantiator.AddPrimitive` extended parameter `first` (`bool`; true for the first primitive) to primitiveNumeration (`int`; counting upwards from zero). This allows for creating unique GameObject names.
 - Renamed the main class `GltFast` to `GltfImporter` to properly reflect its purpose. There is a fallback `GltFast` class for backwards compatibility
@@ -502,7 +654,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2019-07-24
 ### Changed
-- Tranformed Project into a Unity Package, which can easily be installed via Package Manager
+- Transformed Project into a Unity Package, which can easily be installed via Package Manager
 
 ## [0.3.0] - 2019-06-30
 ### Added
@@ -548,8 +700,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [KtxUnity]: https://github.com/atteneder/KtxUnity
 [DracoUnity]: https://github.com/atteneder/DracoUnity
 [aurorahcx]: https://github.com/aurorahcx
+[Battlehub0x]: https://github.com/Battlehub0x
 [Bersaelor]: https://github.com/Bersaelor
 [EricBeetsOfficial-Opuscope]: https://github.com/EricBeetsOfficial-Opuscope
+[Holo-Krzysztof]: https://github.com/Holo-Krzysztof
 [hybridherbst]: https://github.com/hybridherbst
 [mikejurka]: https://github.com/mikejurka
 [ReadyPlayerMe]: https://readyplayer.me
@@ -557,3 +711,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [NyxStudio]: https://github.com/NyxStudio
 [zharry]: https://github.com/zharry
 [weichx]: https://gist.github.com/weichx
+[wonkee-kim]: https://github.com/wonkee-kim

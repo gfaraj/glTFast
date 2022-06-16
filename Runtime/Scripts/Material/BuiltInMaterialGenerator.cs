@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-#if ! ( USING_URP || USING_HDRP )
+#if ! ( USING_URP || USING_HDRP || (UNITY_SHADER_GRAPH_12_OR_NEWER && GLTFAST_BUILTIN_SHADER_GRAPH) )
 #define GLTFAST_BUILTIN_RP
 #endif
 
@@ -22,61 +22,112 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Material = UnityEngine.Material;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace GLTFast.Materials {
 
+    using Logging;
     using AlphaMode = Schema.Material.AlphaMode;
 
+    /// <summary>
+    /// Built-In render pipeline Standard shader modes
+    /// </summary>
     public enum StandardShaderMode {
+        /// <summary>
+        /// Opaque mode
+        /// </summary>
         Opaque = 0,
+        /// <summary>
+        /// Cutout mode (alpha test)
+        /// </summary>
         Cutout = 1,
+        /// <summary>
+        /// Fade mode (alpha blended opacity)
+        /// </summary>
         Fade = 2,
+        /// <summary>
+        /// Transparent mode (alpha blended transmission; e.g. glass)
+        /// </summary>
         Transparent = 3
     }
     
+    /// <summary>
+    /// Converts glTF materials to Unity materials for the Built-in Render Pipeline
+    /// </summary>
     public class BuiltInMaterialGenerator : MaterialGenerator {
 
         // Built-in Render Pipeline
-        public const string KW_ALPHAPREMULTIPLY_ON = "_ALPHAPREMULTIPLY_ON";
-        public const string KW_EMISSION = "_EMISSION";
-        public const string KW_METALLIC_ROUGNESS_MAP = "_METALLICGLOSSMAP";
-        public const string KW_OCCLUSION = "_OCCLUSION";        
-        public const string KW_SPEC_GLOSS_MAP = "_SPECGLOSSMAP";
-
         const string KW_ALPHABLEND_ON = "_ALPHABLEND_ON";
-        
-        public static readonly int glossinessPropId = Shader.PropertyToID("_Glossiness");
-        public static readonly int metallicGlossMapPropId = Shader.PropertyToID("_MetallicGlossMap");
-        public static readonly int roughnessPropId = Shader.PropertyToID("_Roughness");
-        public static readonly int zWritePropId = Shader.PropertyToID("_ZWrite");
+        const string KW_ALPHAPREMULTIPLY_ON = "_ALPHAPREMULTIPLY_ON";
+        const string KW_EMISSION = "_EMISSION";
+        const string KW_METALLIC_ROUGNESS_MAP = "_METALLICGLOSSMAP";
+        const string KW_OCCLUSION = "_OCCLUSION";
+        const string KW_SPEC_GLOSS_MAP = "_SPECGLOSSMAP";
 
+        static readonly int glossinessPropId = Shader.PropertyToID("_Glossiness");
+        static readonly int metallicGlossMapPropId = Shader.PropertyToID("_MetallicGlossMap");
         static readonly int metallicRoughnessMapScaleTransformPropId = Shader.PropertyToID("_MetallicGlossMap_ST");
         static readonly int metallicRoughnessMapRotationPropId = Shader.PropertyToID("_MetallicGlossMapRotation");
         static readonly int metallicRoughnessMapUVChannelPropId = Shader.PropertyToID("_MetallicGlossMapUVChannel");
         static readonly int modePropId = Shader.PropertyToID("_Mode");
+        static readonly int roughnessPropId = Shader.PropertyToID("_Roughness");
 
+#if UNITY_EDITOR
+        const string SHADER_PATH_PREFIX = "Packages/com.atteneder.gltfast/Runtime/Shader/Built-In/";
+        const string SHADER_PATH_PBR_METALLIC_ROUGHNESS = "glTFPbrMetallicRoughness.shader";
+        const string SHADER_PATH_PBR_SPECULAR_GLOSSINESS = "glTFPbrSpecularGlossiness.shader";
+        const string SHADER_PATH_UNLIT = "glTFUnlit.shader";
+#else
         const string SHADER_PBR_METALLIC_ROUGHNESS = "glTF/PbrMetallicRoughness";
         const string SHADER_PBR_SPECULAR_GLOSSINESS = "glTF/PbrSpecularGlossiness";
         const string SHADER_UNLIT = "glTF/Unlit";
-        
+#endif
+
         Shader pbrMetallicRoughnessShader;
         Shader pbrSpecularGlossinessShader;
         Shader unlitShader;
 
+        /// <inheritdoc />
         public override Material GetDefaultMaterial() {
             return GetPbrMetallicRoughnessMaterial();
         }
         
+        /// <summary>
+        /// Finds the shader required for metallic/roughness based materials.
+        /// </summary>
+        /// <returns>Metallic/Roughness shader</returns>
         protected virtual Shader FinderShaderMetallicRoughness() {
+#if UNITY_EDITOR
+            return AssetDatabase.LoadAssetAtPath<Shader>($"{SHADER_PATH_PREFIX}{SHADER_PATH_PBR_METALLIC_ROUGHNESS}");
+#else
             return FindShader(SHADER_PBR_METALLIC_ROUGHNESS);
+#endif
         }
         
+        /// <summary>
+        /// Finds the shader required for specular/glossiness based materials.
+        /// </summary>
+        /// <returns>Specular/Glossiness shader</returns>
         protected virtual Shader FinderShaderSpecularGlossiness() {
+#if UNITY_EDITOR
+            return AssetDatabase.LoadAssetAtPath<Shader>($"{SHADER_PATH_PREFIX}{SHADER_PATH_PBR_SPECULAR_GLOSSINESS}");
+#else
             return FindShader(SHADER_PBR_SPECULAR_GLOSSINESS);
+#endif
         }
 
+        /// <summary>
+        /// Finds the shader required for unlit materials.
+        /// </summary>
+        /// <returns>Unlit shader</returns>
         protected virtual Shader FinderShaderUnlit() {
+#if UNITY_EDITOR
+            return AssetDatabase.LoadAssetAtPath<Shader>($"{SHADER_PATH_PREFIX}{SHADER_PATH_UNLIT}");
+#else
             return FindShader(SHADER_UNLIT);
+#endif
         }
 
         Material GetPbrMetallicRoughnessMaterial(bool doubleSided=false) {
@@ -134,6 +185,7 @@ namespace GLTFast.Materials {
             return mat;
         }
 
+        /// <inheritdoc />
         public override Material GenerateMaterial(
             Schema.Material gltfMaterial,
             IGltfReadable gltf
@@ -308,7 +360,12 @@ namespace GLTFast.Materials {
 
             return material;
         }
-        
+
+        /// <summary>
+        /// Configures material for alpha masking.
+        /// </summary>
+        /// <param name="material">Target material</param>
+        /// <param name="alphaCutoff">Threshold value for alpha masking</param>
         public static void SetAlphaModeMask(UnityEngine.Material material, float alphaCutoff)
         {
             material.EnableKeyword(KW_ALPHATEST_ON);
@@ -323,11 +380,20 @@ namespace GLTFast.Materials {
             material.DisableKeyword(KW_ALPHABLEND_ON);
         }
 
+        /// <summary>
+        /// Configures material for alpha masking.
+        /// </summary>
+        /// <param name="material">Target material</param>
+        /// <param name="gltfMaterial">Source material</param>
         public static void SetAlphaModeMask(UnityEngine.Material material, Schema.Material gltfMaterial)
         {
             SetAlphaModeMask(material, gltfMaterial.alphaCutoff);
         }
 
+        /// <summary>
+        /// Configures material for alpha blending.
+        /// </summary>
+        /// <param name="material">Target material</param>
         public static void SetAlphaModeBlend( UnityEngine.Material material ) {
             material.SetFloat(modePropId, (int)StandardShaderMode.Fade);
             material.SetOverrideTag(TAG_RENDER_TYPE, TAG_RENDER_TYPE_FADE);
@@ -340,6 +406,10 @@ namespace GLTFast.Materials {
             material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;  //3000
         }
 
+        /// <summary>
+        /// Configures material for transparency.
+        /// </summary>
+        /// <param name="material">Target material</param>
         public static void SetAlphaModeTransparent( UnityEngine.Material material ) {
             material.SetFloat(modePropId, (int)StandardShaderMode.Fade);
             material.SetOverrideTag(TAG_RENDER_TYPE, TAG_RENDER_TYPE_TRANSPARENT);
@@ -352,6 +422,10 @@ namespace GLTFast.Materials {
             material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;  //3000
         }
 
+        /// <summary>
+        /// Configures material to be opaque.
+        /// </summary>
+        /// <param name="material">Target material</param>
         public static void SetOpaqueMode(UnityEngine.Material material) {
             material.SetOverrideTag(TAG_RENDER_TYPE, TAG_RENDER_TYPE_OPAQUE);
             material.DisableKeyword(KW_ALPHABLEND_ON);

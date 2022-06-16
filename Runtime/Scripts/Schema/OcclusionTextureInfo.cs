@@ -13,7 +13,13 @@
 // limitations under the License.
 //
 
-namespace GLTFast.Schema{ 
+using Unity.Mathematics;
+
+namespace GLTFast.Schema{
+    
+    /// <summary>
+    /// Occlusion map specific texture info
+    /// </summary>
     [System.Serializable]
     public class OcclusionTextureInfo : TextureInfo {
 
@@ -28,11 +34,13 @@ namespace GLTFast.Schema{
         /// </summary>
         public float strength = 1.0f;
         
-        public override void GltfSerialize(JsonWriter writer) {
+        internal override void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             GltfSerializeTextureInfo(writer);
+            if (math.abs(strength - 1f) > Constants.epsilon) {
+                writer.AddProperty("strength", strength);
+            }
             writer.Close();
-            throw new System.NotImplementedException($"GltfSerialize missing on {GetType()}");
         }
     }
 }

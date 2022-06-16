@@ -18,11 +18,19 @@ using UnityEngine;
 
 namespace GLTFast
 {
+    using Logging;
     using Loading;
+    using Materials;
 
+    /// <summary>
+    /// Base component for code-less loading of glTF files
+    /// </summary>
     public abstract class GltfAssetBase : MonoBehaviour
     {
-        protected GltfImport importer;
+        /// <summary>
+        /// Instance used for loading the glTF's content
+        /// </summary>
+        public GltfImport importer { get; protected set; }
         
         /// <summary>
         /// Indicates wheter the glTF was loaded (no matter if successfully or not)
@@ -30,6 +38,10 @@ namespace GLTFast
         /// <value>True when loading routine ended, false otherwise.</value>
         public bool isDone => importer!=null && importer.LoadingDone;
         
+        /// <summary>
+        /// Scene ID of the recently instantiated scene. Null if there was no
+        /// scene instantiated (successfully).
+        /// </summary>
         public int? currentSceneId { get; protected set; }
         
         /// <summary>
@@ -41,6 +53,7 @@ namespace GLTFast
         /// loading procedure in order to keep the frame rate responsive.</param>
         /// <param name="materialGenerator">Used to convert glTF materials to <see cref="Material"/> instances</param>
         /// <param name="logger">Used for message reporting</param>
+        /// <returns>Async Task that loads the glTF's contents</returns>
         public virtual async Task<bool> Load(
             string url,
             IDownloadProvider downloadProvider=null,
@@ -129,18 +142,38 @@ namespace GLTFast
             }
         }
 
+        /// <summary>
+        /// Returns an instance of the default instantiator
+        /// </summary>
+        /// <param name="logger">Custom logger to use with the instantiator</param>
+        /// <returns>Default instantiator instance</returns>
         protected abstract IInstantiator GetDefaultInstantiator(ICodeLogger logger);
         
+        /// <summary>
+        /// Callback that is called after instantiation
+        /// </summary>
+        /// <param name="instantiator">instantiator that was used</param>
+        /// <param name="success">True if instantiation was successful, false otherwise</param>
         protected virtual void PostInstantiation(IInstantiator instantiator, bool success) {
             currentSceneId = success ? importer.defaultSceneIndex : (int?)null;
         }
 
-        protected virtual void OnDestroy()
-        {
+        /// <summary>
+        /// Releases previously allocated resources.
+        /// </summary>
+        public void Dispose() {
             if(importer!=null) {
                 importer.Dispose();
                 importer=null;
             }
+        }
+
+        /// <summary>
+        /// Called before GameObject is destroyed
+        /// </summary>
+        protected virtual void OnDestroy()
+        {
+            Dispose();
         }
     }
 }

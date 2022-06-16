@@ -1,6 +1,6 @@
 {
   "name": "com.atteneder.gltfast",
-  "version": "4.4.10",
+  "version": "4.8.2",
   "displayName": "glTFast",
   "description": "Use glTFast to import and export glTF 3D files efficiently at runtime or in the Editor",
   "unity": "2019.4",
@@ -24,8 +24,8 @@
     "com.unity.modules.jsonserialize": "1.0.0",
     "com.unity.modules.unitywebrequest": "1.0.0",
     "com.unity.modules.unitywebrequesttexture": "1.0.0",
-    "com.unity.mathematics": "1.2.1",
-    "com.unity.burst": "1.4.11"
+    "com.unity.mathematics": "1.2.6",
+    "com.unity.burst": "1.6.6"
   },
   "type": "library",
   "unityRelease": "7f1"

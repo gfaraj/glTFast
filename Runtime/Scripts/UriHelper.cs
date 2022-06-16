@@ -21,7 +21,7 @@ using UnityEngine;
 
 namespace GLTFast {
 
-    public static class UriHelper {
+     static class UriHelper {
         
         public static Uri GetBaseUri( Uri uri ) {
             if(uri==null) return null;
@@ -78,7 +78,11 @@ namespace GLTFast {
             var start = 0;
             parentLevels = 0;
             while(true) {
-                var i = uri.IndexOf('/',start);
+#if UNITY_EDITOR_WIN || UNITY_STANDALONE_WIN || UNITY_WSA
+                var i = uri.IndexOfAny(new char[]{Path.DirectorySeparatorChar,Path.AltDirectorySeparatorChar},start);
+#else
+                var i = uri.IndexOf(Path.DirectorySeparatorChar,start);
+#endif
                 var found = i >= 0;
                 var len = found ? (i - start) : uri.Length-start;
                     if (len > 0) {
@@ -105,7 +109,7 @@ namespace GLTFast {
             var first = true;
             foreach (var segment in segments) {
                 if (!first) {
-                    sb.Append('/');
+                    sb.Append(Path.DirectorySeparatorChar);
                 }
                 sb.Append(segment);
                 first = false;
@@ -157,22 +161,22 @@ namespace GLTFast {
             return ImageFormat.Unknown;
         }
         
-        /// string-based IsGltfBinary alternative
-        /// Profiling result: Faster/less memory, but for .glb/.gltf just barely better (uknown ~2x)
-        /// Downside: less convenient
-        // public static bool? IsGltfBinary( string uri ) {
-        //     // quick glTF-binary check
-        //     if (uri.EndsWith(GltfGlobals.glbExt, StringComparison.OrdinalIgnoreCase)) return true;
-        //     if (uri.EndsWith(GltfGlobals.gltfExt, StringComparison.OrdinalIgnoreCase)) return false;
-
-        //     // thourough glTF-binary extension check that strips HTTP GET parameters
-        //     int getIndex = uri.LastIndexOf('?');
-        //     if (getIndex >= 0) {
-        //         var ext = uri.Substring(getIndex - GltfGlobals.gltfExt.Length, GltfGlobals.gltfExt.Length);
-        //         if(ext.EndsWith(GltfGlobals.glbExt, StringComparison.OrdinalIgnoreCase)) return true;
-        //         if(ext.EndsWith(GltfGlobals.gltfExt, StringComparison.OrdinalIgnoreCase)) return false;
-        //     }
-        //     return null;
-        // }
+        // // string-based IsGltfBinary alternative
+        // // Profiling result: Faster/less memory, but for .glb/.gltf just barely better (unknown ~2x)
+        // // Downside: less convenient
+        //  public static bool? IsGltfBinary( string uri ) {
+        //      // quick glTF-binary check
+        //      if (uri.EndsWith(GltfGlobals.glbExt, StringComparison.OrdinalIgnoreCase)) return true;
+        //      if (uri.EndsWith(GltfGlobals.gltfExt, StringComparison.OrdinalIgnoreCase)) return false;
+        //
+        //      // thorough glTF-binary extension check that strips HTTP GET parameters
+        //      int getIndex = uri.LastIndexOf('?');
+        //      if (getIndex >= 0) {
+        //          var ext = uri.Substring(getIndex - GltfGlobals.gltfExt.Length, GltfGlobals.gltfExt.Length);
+        //          if(ext.EndsWith(GltfGlobals.glbExt, StringComparison.OrdinalIgnoreCase)) return true;
+        //          if(ext.EndsWith(GltfGlobals.gltfExt, StringComparison.OrdinalIgnoreCase)) return false;
+        //      }
+        //      return null;
+        //  }
     }
 }
