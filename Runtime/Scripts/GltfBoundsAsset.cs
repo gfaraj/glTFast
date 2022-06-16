@@ -20,14 +20,29 @@ using UnityEngine;
 
 namespace GLTFast
 {
+    using Logging;
+    using Materials;
+
+    /// <summary>
+    /// Base component for code-less loading of glTF files
+    /// Extends <seealso cref="GltfAsset"/> with bounding box calculation
+    /// </summary>
     public class GltfBoundsAsset : GltfAsset {
 
-        [Tooltip("Create a box collider encapsulating the glTF asset")]
+        /// <summary>
+        /// If true, a box collider encapsulating the glTF asset is created
+        /// </summary>
+        [Tooltip("If true, a box collider encapsulating the glTF asset is created")]
         public bool createBoxCollider = true;
 
+        /// <summary>
+        /// Bounding box of the instantiated glTF scene
+        /// </summary>
         [NonSerialized]
         public Bounds bounds;
 
+        
+        /// <inheritdoc />
         public override async Task<bool> Load(
             string url,
             IDownloadProvider downloadProvider=null,
@@ -58,6 +73,7 @@ namespace GLTFast
             return success;
         }
 
+        /// <inheritdoc />
         public override bool InstantiateScene(int sceneIndex, ICodeLogger logger = null) {
             base.InstantiateScene(sceneIndex, logger);
             var instantiator = (GameObjectBoundsInstantiator)GetDefaultInstantiator(logger);
@@ -70,6 +86,7 @@ namespace GLTFast
             return success;
         }
 
+        /// <inheritdoc />
         protected override IInstantiator GetDefaultInstantiator(ICodeLogger logger) {
             return new GameObjectBoundsInstantiator(importer, transform, logger);
         }

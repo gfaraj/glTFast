@@ -15,6 +15,7 @@
 
 namespace GLTFast.Schema {
 
+    /// <inheritdoc cref="Extension.TextureTransform"/>
     [System.Serializable]
     public class TextureTransform {
 
@@ -38,7 +39,7 @@ namespace GLTFast.Schema {
         /// </summary>
         public int texCoord = -1;
 
-        public virtual void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             if (offset != null) {
                 writer.AddArrayProperty("offset", offset);

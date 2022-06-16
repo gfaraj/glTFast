@@ -36,14 +36,23 @@ namespace GLTFast {
 
         protected Dictionary<uint,Entity> nodes;
 
+        protected InstantiationSettings settings;
+        
         EntityManager entityManager;
         EntityArchetype nodeArcheType;
         EntityArchetype sceneArcheType;
 
-        public EntityInstantiator(IGltfReadable gltf, Entity parent, ICodeLogger logger = null) {
+        public EntityInstantiator(
+            IGltfReadable gltf,
+            Entity parent,
+            ICodeLogger logger = null,
+            InstantiationSettings settings = null
+            )
+        {
             this.gltf = gltf;
             this.parent = parent;
             this.logger = logger;
+            this.settings = settings ?? new InstantiationSettings();
         }
 
         public virtual void Init() {
@@ -106,6 +115,9 @@ namespace GLTFast {
             float[] morphTargetWeights = null,
             int primitiveNumeration = 0
         ) {
+            if ((settings.mask & ComponentType.Mesh) == 0) {
+                return;
+            }
             Entity node;
             if(primitiveNumeration==0) {
                 // Use Node GameObject for first Primitive
@@ -122,7 +134,7 @@ namespace GLTFast {
             for (var index = 0; index < materialIndices.Length; index++) {
                 var material = gltf.GetMaterial(materialIndices[index]) ?? gltf.GetDefaultMaterial();
                  
-                RenderMeshUtility.AddComponents(node,entityManager,new RenderMeshDescription(mesh,material,subMeshIndex:index));
+                RenderMeshUtility.AddComponents(node,entityManager,new RenderMeshDescription(mesh,material,layer:settings.layer,subMeshIndex:index));
                  if(joints!=null || hasMorphTargets) {
                      if (joints != null) {
                          var bones = new Entity[joints.Length];
@@ -154,6 +166,9 @@ namespace GLTFast {
             NativeArray<Vector3>? scales,
             int primitiveNumeration = 0
         ) {
+            if ((settings.mask & ComponentType.Mesh) == 0) {
+                return;
+            }
             foreach (var materialIndex in materialIndices) {
                 var material = gltf.GetMaterial(materialIndex) ?? gltf.GetDefaultMaterial();
                 material.enableInstancing = true;
@@ -176,8 +191,21 @@ namespace GLTFast {
         }
 
         public void AddCamera(uint nodeIndex, uint cameraIndex) {
+            if ((settings.mask & ComponentType.Camera) == 0) {
+                return;
+            }
             var camera = gltf.GetSourceCamera(cameraIndex);
             // TODO: Add camera support
+        }
+
+        public void AddLightPunctual(
+            uint nodeIndex,
+            uint lightIndex
+        ) {
+            if ((settings.mask & ComponentType.Light) == 0) {
+                return;
+            }
+            // TODO: Add lights support
         }
 
         public void AddScene(
@@ -205,7 +233,7 @@ namespace GLTFast {
             }
 
 #if UNITY_ANIMATION
-            if (animationClips != null) {
+            if ((settings.mask & ComponentType.Animation) != 0 && animationClips != null) {
                 // TODO: Add animation support
             }
 #endif // UNITY_ANIMATION

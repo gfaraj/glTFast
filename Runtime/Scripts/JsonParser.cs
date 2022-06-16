@@ -30,11 +30,22 @@ namespace GLTFast {
             var stopWatch = new Stopwatch();
             stopWatch.Start();
 #endif
+            Root root = null;
+            
             // Step one: main JSON parsing
             Profiler.BeginSample("JSON main");
-            var root = JsonUtility.FromJson<Root>(json);
-            Profiler.EndSample();
+            try {
+                root = JsonUtility.FromJson<Root>(json);
+            }
+            catch (System.ArgumentException) {
+                return null;
+            }
 
+            if (root == null) {
+                return null;
+            }
+            Profiler.EndSample();
+            
             // Step two:
             // detect, if a secondary null-check is necessary.
             Profiler.BeginSample("JSON extension check");
@@ -165,7 +176,8 @@ namespace GLTFast {
                 for (int i = 0; i < root.nodes.Length; i++) {
                     var e = root.nodes[i].extensions;
                     if (e != null) {
-                        if (e.EXT_mesh_gpu_instancing?.attributes == null) {
+                        if (e.EXT_mesh_gpu_instancing?.attributes == null && 
+                            (e.KHR_lights_punctual == null || e.KHR_lights_punctual.light < 0 ) ) {
                             root.nodes[i].extensions = null;
                         }
                     }

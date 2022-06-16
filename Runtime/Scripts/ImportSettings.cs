@@ -18,7 +18,10 @@ using System;
 namespace GLTFast {
 
     using Schema;
-
+    
+    /// <summary>
+    /// glTF import settings
+    /// </summary>
     [Serializable]
     public class ImportSettings {
         
@@ -29,7 +32,7 @@ namespace GLTFast {
             /// <summary>
             /// Use original node names.
             /// Fallback to mesh's name (if present)
-            /// Fallback to "Node_<index>" as last resort. 
+            /// Fallback to "Node_&lt;index&gt;" as last resort. 
             /// </summary>
             Original,
             /// <summary>
@@ -41,14 +44,29 @@ namespace GLTFast {
             OriginalUnique
         }
 
+        /// <summary>
+        /// Target animation system
+        /// </summary>
         public enum AnimationMethod
         {
+            /// <summary>
+            /// Don't target or import animation
+            /// </summary>
             None,
+            /// <summary>
+            /// <see href="https://docs.unity3d.com/Manual/Animations.html">Legacy Animation System</see>
+            /// </summary>
             Legacy,
+            /// <summary>
+            /// <see href="https://docs.unity3d.com/Manual/AnimationOverview.html">Default Animation System (Mecanim)</see>
+            /// </summary>
             Mecanim
         }
 
+        /// <inheritdoc cref="NameImportMethod"/>
         public NameImportMethod nodeNameMethod = NameImportMethod.Original;
+        
+        /// <inheritdoc cref="animationMethod"/>
         public AnimationMethod animationMethod = AnimationMethod.Legacy;
 
         /// <summary>
@@ -56,12 +74,16 @@ namespace GLTFast {
         /// Note: Creating mipmaps from Jpeg/PNG textures is very slow (at the moment).
         /// See https://github.com/atteneder/glTFast/issues/220 for details 
         /// </summary>
-        public bool generateMipMaps = false;
+        public bool generateMipMaps;
 
         /// <summary>
-        /// These two properties define the default filtering mode for textures that have no such specification in data
+        /// Defines the default minification filter mode for textures that have no such specification in data
         /// </summary>
         public Sampler.MinFilterMode defaultMinFilterMode = Sampler.MinFilterMode.Linear;
+        
+        /// <summary>
+        /// Define the default magnification filter mode for textures that have no such specification in data
+        /// </summary>
         public Sampler.MagFilterMode defaultMagFilterMode = Sampler.MagFilterMode.Linear;
 
         /// <summary>

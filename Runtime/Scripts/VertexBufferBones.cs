@@ -27,8 +27,9 @@ using UnityEngine.Rendering;
 
 namespace GLTFast {
 
-    using Vertex;
+    using Logging;
     using Schema;
+    using Vertex;
 
     abstract class VertexBufferBonesBase {
         
@@ -117,14 +118,31 @@ namespace GLTFast {
 
             var skinWeights = (int)QualitySettings.skinWeights;
 
-            if(skinWeights < 4) {
-                var job = new SortJointsByWeightsJob {
+#if UNITY_EDITOR
+            // If this is design-time import, fix and import all weights.
+            if(!UnityEditor.EditorApplication.isPlaying || skinWeights < 4) {
+                if (!UnityEditor.EditorApplication.isPlaying) {
+                    skinWeights = 4;
+                }
+#else
+            if(skinWeights < 4) { 
+#endif
+                var job = new SortAndRenormalizeBoneWeightsJob {
                     bones = vData,
                     skinWeights = math.max(1,skinWeights)
                 };
                 jobHandle = job.Schedule(vData.Length, GltfImport.DefaultBatchCount, jobHandle); 
             }
-            
+#if GLTFAST_SAFE
+            else {
+                // Re-normalizing alone is sufficient
+                var job = new RenormalizeBoneWeightsJob {
+                    bones = vData,
+                };
+                jobHandle = job.Schedule(vData.Length, GltfImport.DefaultBatchCount, jobHandle);
+            }
+#endif
+
             Profiler.EndSample();
             return jobHandle;
         }

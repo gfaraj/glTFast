@@ -15,11 +15,18 @@
 
 namespace GLTFast.Schema {
 
+    /// <summary>
+    /// Scene, the top level hierarchy object.
+    /// </summary>
     [System.Serializable]
-    public class Scene : RootChild {
+    public class Scene : NamedObject {
+        
+        /// <summary>
+        /// The indices of all root nodes
+        /// </summary>
         public uint[] nodes;
         
-        public void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             GltfSerializeRoot(writer);
             writer.AddArrayProperty("nodes",nodes);

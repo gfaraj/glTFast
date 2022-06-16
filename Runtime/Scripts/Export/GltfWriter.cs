@@ -25,7 +25,6 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using GLTFast.Schema;
-using JetBrains.Annotations;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -38,6 +37,7 @@ using Buffer = GLTFast.Schema.Buffer;
 using Debug = UnityEngine.Debug;
 using Material = GLTFast.Schema.Material;
 using Mesh = GLTFast.Schema.Mesh;
+using Sampler = GLTFast.Schema.Sampler;
 using Texture = GLTFast.Schema.Texture;
 
 #if DEBUG
@@ -52,12 +52,23 @@ using UnityEditor;
 
 namespace GLTFast.Export {
 
+    using Logging;
+    
+    /// <summary>
+    /// Provides glTF export independent of workflow (GameObjects/Entities)
+    /// </summary>
     public class GltfWriter : IGltfWritable {
 
         enum State {
             Initialized,
             ContentAdded,
             Disposed
+        }
+        
+        struct AttributeData {
+            public int stream;
+            public int offset;
+            public int accessorId;
         }
         
 #region Constants
@@ -83,14 +94,15 @@ namespace GLTFast.Export {
         List<Material> m_Materials;
         List<Texture> m_Textures;
         List<Image> m_Images;
+        List<Sampler> m_Samplers;
         List<Accessor> m_Accessors;
         List<BufferView> m_BufferViews;
 
+        List<ImageExportBase> m_ImageExports;
+        List<SamplerKey> m_SamplerKeys;
         List<UnityEngine.Material> m_UnityMaterials;
         List<UnityEngine.Mesh> m_UnityMeshes;
-        List<UnityEngine.Texture> m_UnityTextures;
         Dictionary<int, int[]> m_NodeMaterials;
-        Dictionary<int, string> m_ImagePathsToAdd;
 
         Stream m_BufferStream;
         string m_BufferPath;
@@ -117,16 +129,7 @@ namespace GLTFast.Export {
             m_DeferAgent = deferAgent ?? new UninterruptedDeferAgent();
         }
 
-        /// <summary>
-        /// Adds a node to the glTF
-        /// </summary>
-        /// <param name="translation">Local translation of the node (in Unity-space)</param>
-        /// <param name="rotation">Local rotation of the node (in Unity-space)</param>
-        /// <param name="scale">Local scale of the node (in Unity-space)</param>
-        /// <param name="children">Array of node indices that are parented to
-        /// this newly created node</param>
-        /// <param name="name">Name of the node</param>
-        /// <returns>glTF node index</returns>
+        /// <inheritdoc />
         public uint AddNode(
             float3? translation = null,
             quaternion? rotation = null,
@@ -155,44 +158,20 @@ namespace GLTFast.Export {
             return (uint) m_Nodes.Count - 1;
         }
         
-        /// <summary>
-        /// Assigns a mesh to a previously added node
-        /// </summary>
-        /// <param name="nodeId">Index of the node to add the mesh to</param>
-        /// <param name="uMesh">Unity mesh to be assigned and exported</param>
-        /// <param name="uMaterials">Materials to be assigned and exported
-        /// (multiple in case of sub-meshes)</param>
-        /// <returns>True if the conversion was flawless, false otherwise (use
-        /// <see cref="m_Logger"/> for analysing errors)</returns>
-        public bool AddMeshToNode(int nodeId, [NotNull] UnityEngine.Mesh uMesh, List<UnityEngine.Material> uMaterials) {
+        /// <inheritdoc />
+        public void AddMeshToNode(int nodeId, UnityEngine.Mesh uMesh, int[] materialIds) {
             CertifyNotDisposed();
             var node = m_Nodes[nodeId];
 
-            var success = true;
-            if (uMaterials != null && uMaterials.Count > 0) {
-                var materialIds = new int[uMaterials.Count];
-                for (var i = 0; i < uMaterials.Count; i++) {
-                    var uMaterial = uMaterials[i];
-                    if (uMaterial == null) {
-                        materialIds[i] = -1;
-                    } else { 
-                        success &= AddMaterial(uMaterial, out materialIds[i]);
-                    }
-                }
+            if (materialIds!=null && materialIds.Length > 0 ) {
                 m_NodeMaterials = m_NodeMaterials ?? new Dictionary<int, int[]>();
                 m_NodeMaterials[nodeId] = materialIds;
             }
 
             node.mesh = AddMesh(uMesh);
-            return success;
         }
 
-        /// <summary>
-        /// Adds a scene to the glTF
-        /// </summary>
-        /// <param name="nodes">Root level nodes</param>
-        /// <param name="name">Name of the scene</param>
-        /// <returns>glTF scene index</returns>
+        /// <inheritdoc />
         public uint AddScene(uint[] nodes, string name = null) {
             CertifyNotDisposed();
             m_Scenes = m_Scenes ?? new List<Scene>();
@@ -206,64 +185,100 @@ namespace GLTFast.Export {
             }
             return (uint) m_Scenes.Count - 1;
         }
+        
+        /// <inheritdoc />
+        public bool AddMaterial(UnityEngine.Material uMaterial, out int materialId, IMaterialExport materialExport) {
 
-        public int AddImage( UnityEngine.Texture uTexture ) {
+            if (m_Materials!=null) {
+                materialId = m_UnityMaterials.IndexOf(uMaterial);
+                if (materialId >= 0) {
+                    return true;
+                }
+            } else {
+                m_Materials = new List<Material>();    
+                m_UnityMaterials = new List<UnityEngine.Material>();    
+            }
+            
+            var success = materialExport.ConvertMaterial(uMaterial, out var material, this, m_Logger);
+
+            materialId = m_Materials.Count;
+            m_Materials.Add(material);
+            m_UnityMaterials.Add(uMaterial);
+            return success;
+        }
+
+        /// <inheritdoc />
+        public int AddImage( ImageExportBase imageExport ) {
             CertifyNotDisposed();
             int imageId;
-            if (m_UnityTextures != null) {
-                imageId = m_UnityTextures.IndexOf(uTexture);
+            if (m_ImageExports != null) {
+                imageId = m_ImageExports.IndexOf(imageExport);
                 if (imageId >= 0) {
                     return imageId;
                 }
             } else {
-                m_UnityTextures = new List<UnityEngine.Texture>();
+                m_ImageExports = new List<ImageExportBase>();
                 m_Images = new List<Image>();
             }
 
-            imageId = m_UnityTextures.Count;
+            imageId = m_ImageExports.Count;
 
             // TODO: Create sampler, if required
             // TODO: KTX encoding
 
-#if UNITY_EDITOR
-
-            var assetPath = AssetDatabase.GetAssetPath(uTexture);
-            if (File.Exists(assetPath)) {
-                var mimeType = GetMimeType(assetPath);
-                if (!string.IsNullOrEmpty(mimeType)) {
-                    var image = new Image {
-                        name = uTexture.name,
-                        mimeType = mimeType
-                    };
-
-                    m_ImagePathsToAdd = m_ImagePathsToAdd ?? new Dictionary<int, string>();
-                    m_ImagePathsToAdd[imageId] = assetPath;
-                    
-                    m_UnityTextures.Add(uTexture);
-                    m_Images.Add(image);
-                } else {
-                    m_Logger?.Error(LogCode.ImageFormatUnknown,uTexture.name,assetPath);
-                    return -1;
-                }
-            }
-#else
-            throw new NotImplementedException("Exporting textures at runtime is not yet implemented");
-#endif
+            var image = new Image {
+                name = imageExport.fileName,
+                mimeType = imageExport.mimeType
+            };
+            
+            m_ImageExports.Add(imageExport);
+            m_Images.Add(image);
 
             return imageId;
         }
 
-        public int AddTexture(int imageId) {
+        /// <inheritdoc />
+        public int AddTexture(int imageId, int samplerId) {
             CertifyNotDisposed();
             m_Textures = m_Textures ?? new List<Texture>();
             
             var texture = new Texture {
-                source = imageId
+                source = imageId,
+                sampler = samplerId
             };
+
+            var index = m_Textures.IndexOf(texture);
+            if (index >= 0) {
+                return index;
+            }
+            
             m_Textures.Add(texture);
             return m_Textures.Count - 1;
         }
+        
+        /// <inheritdoc />
+        public int AddSampler(FilterMode filterMode, TextureWrapMode wrapModeU, TextureWrapMode wrapModeV) {
+            if (filterMode == FilterMode.Bilinear && wrapModeU == TextureWrapMode.Repeat && wrapModeV == TextureWrapMode.Repeat) {
+                // This is the default, so no sampler needed
+                return -1;
+            }
+            CertifyNotDisposed();
+            m_Samplers = m_Samplers ?? new List<Sampler>();
+            m_SamplerKeys = m_SamplerKeys ?? new List<SamplerKey>();
 
+            var samplerKey = new SamplerKey(filterMode, wrapModeU, wrapModeV );
+            
+            var index = m_SamplerKeys.IndexOf(samplerKey);
+            if (index >= 0) {
+                return index;
+            }
+            
+            m_Samplers.Add(new Sampler(filterMode, wrapModeU, wrapModeV));
+            m_SamplerKeys.Add(samplerKey);
+            return m_Samplers.Count - 1;
+        }
+
+        /// <inheritdoc />
         public void RegisterExtensionUsage(Extension extension, bool required = true) {
             CertifyNotDisposed();
             if (required) {
@@ -277,106 +292,151 @@ namespace GLTFast.Export {
             }
         }
         
-        /// <summary>
-        /// Exports the collected scenes/content as glTF and disposes this object.
-        /// After the export this instance cannot be re-used!
-        /// </summary>
-        /// <param name="path">glTF destination file path</param>
-        /// <returns>True if the glTF file was created successfully, false otherwise</returns>
+        /// <inheritdoc />
         public async Task<bool> SaveToFileAndDispose(string path) {
+            
             CertifyNotDisposed();
+            
+            var ext = Path.GetExtension(path);
+            var binary = m_Settings.format == GltfFormat.Binary;
+            string bufferPath = null;
+            if (!binary) {
+                if (string.IsNullOrEmpty(ext)) {
+                    bufferPath = path + ".bin";
+                } else {
+                    bufferPath = path.Substring(0, path.Length - ext.Length) + ".bin";
+                }
+            }
+            
+            var outStream = new FileStream(path,FileMode.Create);
+            var success = await SaveAndDispose(outStream, bufferPath, Path.GetDirectoryName(path) );
+            outStream.Close();
+            return success;
+        }
+        
+        /// <inheritdoc />
+        public async Task<bool> SaveToStreamAndDispose(Stream stream) {
+            
+            CertifyNotDisposed();
+
+            if (m_Settings.format != GltfFormat.Binary || GetFinalImageDestination()==ImageDestination.SeparateFile) {
+                m_Logger.Error(LogCode.None, "Save to Stream currently only works for self-contained glTF-Binary");
+                return false;
+            }
+            
+            return await SaveAndDispose(stream);
+        }
+        
+        async Task<bool> SaveAndDispose(Stream outStream, string bufferPath = null, string directory = null) {
+
 #if DEBUG
             if (m_State != State.ContentAdded) {
                 Debug.LogWarning("Exporting empty glTF");
             }
 #endif
-            var ext = Path.GetExtension(path);
-            var binary = m_Settings.format == GltfFormat.Binary;
-            m_BufferPath = null;
-            if (!binary) {
-                if (string.IsNullOrEmpty(ext)) {
-                    m_BufferPath = path + ".bin";
-                } else {
-                    m_BufferPath = path.Substring(0, path.Length - ext.Length) + ".bin";
-                }
-            }
+            m_BufferPath = bufferPath;
 
-            var success = await Bake(Path.GetFileName(m_BufferPath), Path.GetDirectoryName(path));
+            var success = await Bake(Path.GetFileName(m_BufferPath), directory);
 
             if (!success) {
                 m_BufferStream?.Close();
                 Dispose();
                 return false;
             }
-            
-            var json = GetJson();
-            LogSummary(json.Length, m_BufferStream?.Length ?? 0);
 
-            if (binary) {
-                const uint headerSize = 12; // 4 bytes magic + 4 bytes version + 4 bytes length (uint each)
-                const uint chunkOverhead = 8; // 4 bytes chunk length + 4 bytes chunk type (uint each)
-                var glb = new FileStream(path,FileMode.Create);
-                glb.Write(BitConverter.GetBytes(GltfGlobals.GLB_MAGIC));
-                glb.Write(BitConverter.GetBytes((uint)2));
+            var isBinary = m_Settings.format == GltfFormat.Binary;
 
-                var jsonPad = GetPadByteCount((uint)json.Length);
+            const uint headerSize = 12; // 4 bytes magic + 4 bytes version + 4 bytes length (uint each)
+            const uint chunkOverhead = 8; // 4 bytes chunk length + 4 bytes chunk type (uint each)
+            if (isBinary) {
+                outStream.Write(BitConverter.GetBytes(GltfGlobals.GLB_MAGIC));
+                outStream.Write(BitConverter.GetBytes((uint)2));
+
+                MemoryStream jsonStream = null;
+                uint jsonLength;
+                
+                if(outStream.CanSeek) {
+                    // Write empty 3 place-holder uints for:
+                    // - total length
+                    // - JSON chunk length
+                    // - JSON chunk format identifier
+                    // They'll get filled in later
+                    for (var i = 0; i < 12; i++) {
+                        outStream.WriteByte(0);
+                    }
+                    await WriteJsonToStream(outStream);
+                    jsonLength = (uint)(outStream.Length - headerSize - chunkOverhead);
+                }
+                else {
+                    jsonStream = new MemoryStream();
+                    await WriteJsonToStream(jsonStream);
+                    jsonLength = (uint) jsonStream.Length;
+                }
+                LogSummary(jsonLength, m_BufferStream?.Length ?? 0);
+                var jsonPad = GetPadByteCount(jsonLength);
                 var binPad = 0;
-                var totalLength = (uint) (headerSize + chunkOverhead + json.Length + jsonPad);
+                var totalLength = (uint) (headerSize + chunkOverhead + jsonLength + jsonPad);
                 var hasBufferContent = (m_BufferStream?.Length ?? 0) > 0; 
                 if (hasBufferContent) {
                     binPad = GetPadByteCount((uint)m_BufferStream.Length);
                     totalLength += (uint) (chunkOverhead + m_BufferStream.Length + binPad);
                 }
-                
-                glb.Write(BitConverter.GetBytes(totalLength));
-                
-                glb.Write(BitConverter.GetBytes((uint)(json.Length+jsonPad)));
-                glb.Write(BitConverter.GetBytes((uint)ChunkFormat.JSON));
-                var sw = new StreamWriter(glb);
-                sw.Write(json);
-                for (int i = 0; i < jsonPad; i++) {
-                    sw.Write(' ');
+
+                if (outStream.CanSeek) {
+                    outStream.Seek(8, SeekOrigin.Begin);
                 }
-                sw.Flush();
+                
+                outStream.Write(BitConverter.GetBytes(totalLength));
+                
+                outStream.Write(BitConverter.GetBytes((uint)(jsonLength+jsonPad)));
+                outStream.Write(BitConverter.GetBytes((uint)ChunkFormat.JSON));
+
+                if (outStream.CanSeek) {
+                    outStream.Seek(0, SeekOrigin.End);
+                }
+                else {
+                    jsonStream.WriteTo(outStream);
+                    jsonStream.Close();
+                }
+                
+                for (var i = 0; i < jsonPad; i++) {
+                    outStream.WriteByte(0x20);
+                }
 
                 if (hasBufferContent) {
-                    glb.Write(BitConverter.GetBytes((uint)(m_BufferStream.Length+binPad)));
-                    glb.Write(BitConverter.GetBytes((uint)ChunkFormat.BIN));
+                    outStream.Write(BitConverter.GetBytes((uint)(m_BufferStream.Length+binPad)));
+                    outStream.Write(BitConverter.GetBytes((uint)ChunkFormat.BIN));
                     var ms = (MemoryStream)m_BufferStream;
-                    ms.WriteTo(glb);
-                    ms.Flush();
-                    for (int i = 0; i < binPad; i++) {
-                        sw.Write('\0');
+                    ms.WriteTo(outStream);
+                    await ms.FlushAsync();
+                    for (var i = 0; i < binPad; i++) {
+                        outStream.WriteByte(0);
                     }
                 }
-                sw.Close();
-                glb.Close();
             }
             else {
-                File.WriteAllText(path,json);
+                await WriteJsonToStream(outStream);
+                var jsonLength = 0u;
+                if (outStream.CanSeek) {
+                    jsonLength = (uint)(outStream.Length - headerSize - chunkOverhead);
+                }
+                LogSummary(jsonLength, m_BufferStream?.Length ?? 0);
             }
 
             Dispose();
             return true;
         }
 
+        async Task WriteJsonToStream(Stream outStream) {
+            var writer = new StreamWriter(outStream);
+            m_Gltf.GltfSerialize(writer);
+            await writer.FlushAsync();
+        }
+
         void CertifyNotDisposed() {
             if (m_State == State.Disposed) {
                 throw new InvalidOperationException("GltfWriter was already disposed");
             }
-        }
-
-        static string GetMimeType(string assetPath) {
-            string mimeType = null;
-            if (assetPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase)) {
-                mimeType = "image/png";
-            }
-            else if (assetPath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                assetPath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)) {
-                mimeType = "image/jpeg";
-            }
-
-            return mimeType;
         }
 
         ImageDestination GetFinalImageDestination() {
@@ -390,32 +450,12 @@ namespace GLTFast.Export {
             return imageDest;
         }
 
-        bool AddMaterial(UnityEngine.Material uMaterial, out int materialId) {
-
-            if (m_Materials!=null) {
-                materialId = m_UnityMaterials.IndexOf(uMaterial);
-                if (materialId >= 0) {
-                    return true;
-                }
-            } else {
-                m_Materials = new List<Material>();    
-                m_UnityMaterials = new List<UnityEngine.Material>();    
-            }
-            
-            var success = StandardMaterialExport.ConvertMaterial(uMaterial, out var material, this, m_Logger);
-
-            materialId = m_Materials.Count;
-            m_Materials.Add(material);
-            m_UnityMaterials.Add(uMaterial);
-            return success;
-        }
-        
         int GetPadByteCount(uint length) {
             return (4 - (int)(length & 3) ) & 3;
         }
 
         [Conditional("DEBUG")]
-        void LogSummary(int jsonLength, long bufferLength) {
+        void LogSummary(long jsonLength, long bufferLength) {
 #if DEBUG
             var sb = new StringBuilder("glTF summary: ");
             sb.AppendFormat("{0} bytes JSON + {1} bytes buffer", jsonLength, bufferLength);
@@ -434,7 +474,7 @@ namespace GLTFast.Export {
 #if GLTFAST_MESH_DATA
                 await BakeMeshes();
 #else
-                throw new NotImplementedException("glTF export (containing meshes) is currently not supported on Unity 2020.1 and older");
+                await BakeMeshesLegacy();
 #endif
             }
 
@@ -461,6 +501,7 @@ namespace GLTFast.Export {
             m_Gltf.materials = m_Materials?.ToArray();
             m_Gltf.images = m_Images?.ToArray();
             m_Gltf.textures = m_Textures?.ToArray();
+            m_Gltf.samplers = m_Samplers?.ToArray();
 
             m_Gltf.asset = new Asset {
                 version = "2.0",
@@ -553,7 +594,6 @@ namespace GLTFast.Export {
 #if GLTFAST_MESH_DATA
 
         async Task BakeMeshes() {
-            Profiler.BeginSample("BakeMeshes");
             Profiler.BeginSample("AcquireReadOnlyMeshData");
             var meshDataArray = UnityEngine.Mesh.AcquireReadOnlyMeshData(m_UnityMeshes);
             Profiler.EndSample();
@@ -562,12 +602,11 @@ namespace GLTFast.Export {
                 await m_DeferAgent.BreakPoint();
             }
             meshDataArray.Dispose();
-            Profiler.EndSample();
         }
 
         async Task BakeMesh(int meshId, UnityEngine.Mesh.MeshData meshData) {
             
-            Profiler.BeginSample("BakeMesh");
+            Profiler.BeginSample("BakeMesh 1");
             
             var mesh = m_Meshes[meshId];
             var uMesh = m_UnityMeshes[meshId];
@@ -718,82 +757,97 @@ namespace GLTFast.Export {
                 };
             }
             Assert.IsTrue(topology.HasValue);
-
-            Profiler.BeginSample("ScheduleIndexJob");
+            Profiler.EndSample(); // "BakeMesh 1"
+            
             int indexBufferViewId;
             if (uMesh.indexFormat == IndexFormat.UInt16) {
                 var indexData16 = meshData.GetIndexData<ushort>();
                 if (topology.Value == MeshTopology.Quads) {
+                    Profiler.BeginSample("IndexJobUInt16QuadsSchedule");
                     var quadCount = indexData16.Length / 4;
                     var destIndices = new NativeArray<ushort>(quadCount*6,Allocator.TempJob);
                     var job = new ExportJobs.ConvertIndicesQuadFlippedJob<ushort> {
                         input = indexData16,
                         result = destIndices
                     }.Schedule(quadCount, k_DefaultInnerLoopBatchCount);
+                    Profiler.EndSample();
                     while (!job.IsCompleted) {
                         await Task.Yield();
                     }
+                    Profiler.BeginSample("IndexJobUInt16QuadsPostWork");
                     job.Complete(); // TODO: Wait until thread is finished
                     indexBufferViewId = WriteBufferViewToBuffer(
                         destIndices.Reinterpret<byte>(sizeof(ushort)),
                         byteAlignment:sizeof(ushort)
                         );
                     destIndices.Dispose();
+                    Profiler.EndSample();
                 } else {
+                    Profiler.BeginSample("IndexJobUInt16TrisSchedule");
                     var triangleCount = indexData16.Length / 3;
                     var destIndices = new NativeArray<ushort>(indexData16.Length,Allocator.TempJob);
                     var job = new ExportJobs.ConvertIndicesFlippedJob<ushort> {
                         input = indexData16,
                         result = destIndices
                     }.Schedule(triangleCount, k_DefaultInnerLoopBatchCount);
+                    Profiler.EndSample();
                     while (!job.IsCompleted) {
                         await Task.Yield();
                     }
+                    Profiler.BeginSample("IndexJobUInt16TrisPostWork");
                     job.Complete(); // TODO: Wait until thread is finished
                     indexBufferViewId = WriteBufferViewToBuffer(
                         destIndices.Reinterpret<byte>(sizeof(ushort)),
                         byteAlignment:sizeof(ushort)
                         );
                     destIndices.Dispose();
+                    Profiler.EndSample();
                 }
             } else {
                 var indexData32 = meshData.GetIndexData<uint>();
                 if (topology.Value == MeshTopology.Quads) {
+                    Profiler.BeginSample("IndexJobUInt32QuadsSchedule");
                     var quadCount = indexData32.Length / 4;
                     var destIndices = new NativeArray<uint>(quadCount*6,Allocator.TempJob);
                     var job = new ExportJobs.ConvertIndicesQuadFlippedJob<uint> {
                         input = indexData32,
                         result = destIndices
                     }.Schedule(quadCount, k_DefaultInnerLoopBatchCount);
+                    Profiler.EndSample();
                     while (!job.IsCompleted) {
                         await Task.Yield();
                     }
+                    Profiler.BeginSample("IndexJobUInt32QuadsPostWork");
                     job.Complete(); // TODO: Wait until thread is finished
                     indexBufferViewId = WriteBufferViewToBuffer(
                         destIndices.Reinterpret<byte>(sizeof(uint)),
                         byteAlignment:sizeof(uint)
                         );
                     destIndices.Dispose();
+                    Profiler.EndSample();
                 } else {
+                    Profiler.BeginSample("IndexJobUInt32TrisSchedule");
                     var triangleCount = indexData32.Length / 3;
                     var destIndices = new NativeArray<uint>(indexData32.Length, Allocator.TempJob);
                     var job = new ExportJobs.ConvertIndicesFlippedJob<uint> {
                         input = indexData32,
                         result = destIndices
                     }.Schedule(triangleCount, k_DefaultInnerLoopBatchCount);
+                    Profiler.EndSample();
                     while (!job.IsCompleted) {
                         await Task.Yield();
                     }
+                    Profiler.BeginSample("IndexJobUInt32TrisPostWork");
                     job.Complete(); // TODO: Wait until thread is finished
                     indexBufferViewId = WriteBufferViewToBuffer(
                         destIndices.Reinterpret<byte>(sizeof(uint)),
                         byteAlignment:sizeof(uint)
                         );
                     destIndices.Dispose();
+                    Profiler.EndSample();
                 }
             }
-            Profiler.EndSample();
-
+            
             foreach (var accessor in indexAccessors) {
                 accessor.bufferView = indexBufferViewId;
             }
@@ -805,8 +859,7 @@ namespace GLTFast.Export {
                 inputStreams[stream] = meshData.GetVertexData<byte>(stream);
                 outputStreams[stream] = new NativeArray<byte>(inputStreams[stream], Allocator.TempJob);
             }
-
-            Profiler.BeginSample("ScheduleVertexJob");
+            
             foreach (var pair in attrDataDict) {
                 var vertexAttribute = pair.Key;
                 var attrData = pair.Value;
@@ -832,7 +885,6 @@ namespace GLTFast.Export {
                         break;
                 }
             }
-            Profiler.EndSample();
 
             var bufferViewIds = new int[streamCount];
             for (var stream = 0; stream < streamCount; stream++) {
@@ -849,7 +901,362 @@ namespace GLTFast.Export {
                 var attrData = pair.Value;
                 m_Accessors[attrData.accessorId].bufferView = bufferViewIds[attrData.stream];
             }
+        }
+
+        int AddAccessor(Accessor accessor) {
+            m_Accessors = m_Accessors ?? new List<Accessor>();
+            var accessorId = m_Accessors.Count;
+            m_Accessors.Add(accessor);
+            return accessorId;
+        }
+#else
+
+        async Task BakeMeshesLegacy() {
+            for (var meshId = 0; meshId < m_Meshes.Count; meshId++) {
+                BakeMeshLegacy(meshId);
+                await m_DeferAgent.BreakPoint();
+            }
+        }
+
+        void BakeMeshLegacy(int meshId) {
             
+            Profiler.BeginSample("BakeMeshLegacy");
+            
+            var mesh = m_Meshes[meshId];
+            var uMesh = m_UnityMeshes[meshId];
+
+            var attributes = new Attributes();
+            var vertexAttributes = uMesh.GetVertexAttributes();
+            var attrDataDict = new Dictionary<VertexAttribute, AttributeData>();
+            
+            for (var streamId = 0; streamId<vertexAttributes.Length; streamId++) {
+                
+                var attribute = vertexAttributes[streamId];
+                
+                switch (attribute.attribute) {
+                    case VertexAttribute.BlendWeight:
+                    case VertexAttribute.BlendIndices:
+                        Debug.LogWarning($"Vertex attribute {attribute.attribute} is not supported yet");
+                        continue;
+                }
+                
+                var attrData = new AttributeData {
+                    offset = 0,
+                    stream = streamId
+                };
+
+                var accessor = new Accessor {
+                    byteOffset = attrData.offset,
+                    componentType = Accessor.GetComponentType(attribute.format),
+                    count = uMesh.vertexCount,
+                    typeEnum = Accessor.GetAccessorAttributeType(attribute.dimension),
+                };
+                
+                var accessorId = AddAccessor(accessor);
+
+                attrData.accessorId = accessorId;
+                attrDataDict[attribute.attribute] = attrData;
+                
+                switch (attribute.attribute) {
+                    case VertexAttribute.Position:
+                        Assert.AreEqual(VertexAttributeFormat.Float32,attribute.format);
+                        Assert.AreEqual(3,attribute.dimension);
+                        var bounds = uMesh.bounds;
+                        var max = bounds.max;
+                        var min = bounds.min;
+                        accessor.min = new[] { -max.x, min.y, min.z };
+                        accessor.max = new[] { -min.x, max.y, max.z };
+                        attributes.POSITION = accessorId;
+                        break;
+                    case VertexAttribute.Normal:
+                        Assert.AreEqual(VertexAttributeFormat.Float32,attribute.format);
+                        Assert.AreEqual(3,attribute.dimension);
+                        attributes.NORMAL = accessorId;
+                        break;
+                    case VertexAttribute.Tangent:
+                        Assert.AreEqual(VertexAttributeFormat.Float32,attribute.format);
+                        Assert.AreEqual(4,attribute.dimension);
+                        attributes.TANGENT = accessorId;
+                        break;
+                    case VertexAttribute.Color:
+                        accessor.componentType = GLTFComponentType.UnsignedByte;
+                        accessor.normalized = true;
+                        attributes.COLOR_0 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord0:
+                        attributes.TEXCOORD_0 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord1:
+                        attributes.TEXCOORD_1 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord2:
+                        attributes.TEXCOORD_2 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord3:
+                        attributes.TEXCOORD_3 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord4:
+                        attributes.TEXCOORD_4 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord5:
+                        attributes.TEXCOORD_5 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord6:
+                        attributes.TEXCOORD_6 = accessorId;
+                        break;
+                    case VertexAttribute.TexCoord7:
+                        attributes.TEXCOORD_7 = accessorId;
+                        break;
+                    case VertexAttribute.BlendWeight:
+                        attributes.WEIGHTS_0 = accessorId;
+                        break;
+                    case VertexAttribute.BlendIndices:
+                        attributes.JOINTS_0 = accessorId;
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException();
+                }
+            }
+
+            var streamCount = attrDataDict.Count;
+            var indexComponentType = uMesh.indexFormat == IndexFormat.UInt16 ? GLTFComponentType.UnsignedShort : GLTFComponentType.UnsignedInt;
+            mesh.primitives = new MeshPrimitive[uMesh.subMeshCount];
+            var indexAccessors = new Accessor[uMesh.subMeshCount];
+            var indexOffset = 0;
+            MeshTopology? topology = null;
+            var totalIndexCount = 0u;
+            for (var subMeshIndex = 0; subMeshIndex < uMesh.subMeshCount; subMeshIndex++) {
+                var subMesh = uMesh.GetSubMesh(subMeshIndex);
+                if (!topology.HasValue) {
+                    topology = subMesh.topology;
+                } else {
+                    Assert.AreEqual(topology.Value, subMesh.topology, "Mixed topologies are not supported!");
+                }
+                var mode = GetDrawMode(subMesh.topology);
+                if (!mode.HasValue) {
+                    m_Logger?.Error(LogCode.TopologyUnsupported, subMesh.topology.ToString());
+                    mode = DrawMode.Points;
+                }
+
+                Accessor indexAccessor;
+                
+                indexAccessor = new Accessor {
+                    typeEnum = GLTFAccessorAttributeType.SCALAR,
+                    byteOffset = indexOffset,
+                    componentType = indexComponentType,
+                    count = subMesh.indexCount,
+
+                    // min = new []{}, // TODO
+                    // max = new []{}, // TODO
+                };
+                
+                if (subMesh.topology == MeshTopology.Quads) {
+                    indexAccessor.count = indexAccessor.count / 2 * 3; 
+                }
+
+                var indexAccessorId = AddAccessor(indexAccessor);
+                indexAccessors[subMeshIndex] = indexAccessor;
+
+                indexOffset += indexAccessor.count * Accessor.GetComponentTypeSize(indexComponentType);
+
+                mesh.primitives[subMeshIndex] = new MeshPrimitive {
+                    mode = mode.Value,
+                    attributes = attributes,
+                    indices = indexAccessorId,
+                };
+
+                totalIndexCount += uMesh.GetIndexCount(subMeshIndex);
+            }
+            Assert.IsTrue(topology.HasValue);
+
+            Profiler.BeginSample("ExportIndices");
+            int indexBufferViewId;
+            var totalFaceCount = topology==MeshTopology.Quads ? (uint)(totalIndexCount * 1.5) : totalIndexCount;
+            if (uMesh.indexFormat == IndexFormat.UInt16) {
+                var destIndices = new NativeArray<ushort>((int)totalFaceCount,Allocator.TempJob);
+                var offset = 0;
+                for (var subMeshIndex = 0; subMeshIndex < uMesh.subMeshCount; subMeshIndex++) {
+                    var indexData16 = uMesh.GetIndices(subMeshIndex);
+                    switch (topology) {
+                        case MeshTopology.Triangles: {
+                            var triCount = indexData16.Length / 3;
+                            for (var i = 0; i < triCount; i++) {
+                                destIndices[offset+i*3] = (ushort) indexData16[i*3];
+                                destIndices[offset+i*3+1] = (ushort) indexData16[i*3+2];
+                                destIndices[offset+i*3+2] = (ushort) indexData16[i*3+1];
+                            }
+                            offset += indexData16.Length;
+                            break;
+                        }
+                        case MeshTopology.Quads: {
+                            var quadCount = indexData16.Length / 4;
+                            for (var i = 0; i < quadCount; i++) {
+                                destIndices[offset+i*6+0] = (ushort) indexData16[i*4+0];
+                                destIndices[offset+i*6+1] = (ushort) indexData16[i*4+2];
+                                destIndices[offset+i*6+2] = (ushort) indexData16[i*4+1];
+                                destIndices[offset+i*6+3] = (ushort) indexData16[i*4+2];
+                                destIndices[offset+i*6+4] = (ushort) indexData16[i*4+0];
+                                destIndices[offset+i*6+5] = (ushort) indexData16[i*4+3];
+                            }
+                            offset += quadCount*6;
+                            break;
+                        }
+                        default: {
+                            for (var i = 0; i < indexData16.Length; i++) {
+                                destIndices[offset+i] = (ushort) indexData16[i];
+                            }
+                            offset += indexData16.Length;
+                            break;
+                        }
+                    }
+                }
+                indexBufferViewId = WriteBufferViewToBuffer(
+                    destIndices.Reinterpret<byte>(sizeof(ushort)),
+                    byteAlignment:sizeof(ushort)
+                );
+                destIndices.Dispose();
+            } else {
+                var destIndices = new NativeArray<uint>((int)totalFaceCount,Allocator.TempJob);
+                var offset = 0;
+                for (var subMeshIndex = 0; subMeshIndex < uMesh.subMeshCount; subMeshIndex++) {
+                    var indexData16 = uMesh.GetIndices(subMeshIndex);
+                    switch (topology) {
+                        case MeshTopology.Triangles: {
+                            var triCount = indexData16.Length / 3;
+                            for (var i = 0; i < triCount; i++) {
+                                destIndices[offset+i*3] = (uint) indexData16[i*3];
+                                destIndices[offset+i*3+1] = (uint) indexData16[i*3+2];
+                                destIndices[offset+i*3+2] = (uint) indexData16[i*3+1];
+                            }
+                            offset += indexData16.Length;
+                            break;
+                        }
+                        case MeshTopology.Quads:{
+                            var quadCount = indexData16.Length / 4;
+                            for (var i = 0; i < quadCount; i++) {
+                                destIndices[offset+i*6+0] = (uint) indexData16[i*4+0];
+                                destIndices[offset+i*6+1] = (uint) indexData16[i*4+2];
+                                destIndices[offset+i*6+2] = (uint) indexData16[i*4+1];
+                                destIndices[offset+i*6+3] = (uint) indexData16[i*4+2];
+                                destIndices[offset+i*6+4] = (uint) indexData16[i*4+0];
+                                destIndices[offset+i*6+5] = (uint) indexData16[i*4+3];
+                            }
+                            offset += quadCount*6;
+                            break;
+                        }
+                        default: {
+                            for (var i = 0; i < indexData16.Length; i++) {
+                                destIndices[offset+i] = (uint) indexData16[i];
+                            }
+                            offset += indexData16.Length;
+                            break;
+                        }
+                    }
+                }
+                indexBufferViewId = WriteBufferViewToBuffer(
+                    destIndices.Reinterpret<byte>(sizeof(uint)),
+                    byteAlignment:sizeof(uint)
+                );
+                destIndices.Dispose();
+            }
+            Profiler.EndSample();
+
+            foreach (var accessor in indexAccessors) {
+                accessor.bufferView = indexBufferViewId;
+            }
+
+            Profiler.BeginSample("ExportVertexAttributes");
+            foreach (var pair in attrDataDict) {
+                var vertexAttribute = pair.Key;
+                var attrData = pair.Value;
+                var bufferViewId = -1;
+                switch (vertexAttribute) {
+                    case VertexAttribute.Position: {
+                        var vertices = new List<Vector3>();
+                        uMesh.GetVertices(vertices);
+                        var outStream = new NativeArray<Vector3>(vertices.Count, Allocator.TempJob);
+                        for (var i = 0; i < vertices.Count; i++) {
+                            outStream[i] = new Vector3(-vertices[i].x,vertices[i].y,vertices[i].z);
+                        }
+                        bufferViewId = WriteBufferViewToBuffer(
+                            outStream.Reinterpret<byte>(12),
+                            12
+                        );
+                        outStream.Dispose();
+                        break;
+                    }
+                    case VertexAttribute.Normal: {
+                        var normals = new List<Vector3>();
+                        uMesh.GetNormals(normals);
+                        var outStream = new NativeArray<Vector3>(normals.Count, Allocator.TempJob);
+                        for (var i = 0; i < normals.Count; i++) {
+                            outStream[i] = new Vector3(-normals[i].x,normals[i].y,normals[i].z);
+                        }
+                        bufferViewId = WriteBufferViewToBuffer(
+                            outStream.Reinterpret<byte>(12),
+                            12
+                        );
+                        outStream.Dispose();
+                        break;
+                    }
+                    case VertexAttribute.Tangent: {
+                        var tangents = new List<Vector4>();
+                        uMesh.GetTangents(tangents);
+                        var outStream = new NativeArray<Vector4>(tangents.Count, Allocator.TempJob);
+                        for (var i = 0; i < tangents.Count; i++) {
+                            outStream[i] = new Vector4(tangents[i].x,tangents[i].y,-tangents[i].z,tangents[i].w);
+                        }
+                        bufferViewId = WriteBufferViewToBuffer(
+                            outStream.Reinterpret<byte>(16),
+                            16
+                        );
+                        outStream.Dispose();
+                        break;
+                    }
+                    case VertexAttribute.Color: {
+                        var colors = new List<Color32>();
+                        uMesh.GetColors(colors);
+                        var outStream = new NativeArray<Color32>(colors.Count, Allocator.TempJob);
+                        for (var i = 0; i < colors.Count; i++) {
+                            outStream[i] = colors[i];
+                        }
+                        bufferViewId = WriteBufferViewToBuffer(
+                            outStream.Reinterpret<byte>(4),
+                            4
+                        );
+                        outStream.Dispose();
+                        break;
+                    }
+                    case VertexAttribute.TexCoord0:
+                    case VertexAttribute.TexCoord1:
+                    case VertexAttribute.TexCoord2:
+                    case VertexAttribute.TexCoord3:
+                    case VertexAttribute.TexCoord4:
+                    case VertexAttribute.TexCoord5:
+                    case VertexAttribute.TexCoord6:
+                    case VertexAttribute.TexCoord7: {
+                        var uvs = new List<Vector2>();
+                        var channel = (int)vertexAttribute - (int)VertexAttribute.TexCoord0;
+                        uMesh.GetUVs( channel, uvs);
+                        var outStream = new NativeArray<Vector2>(uvs.Count, Allocator.TempJob);
+                        for (var i = 0; i < uvs.Count; i++) {
+                            outStream[i] = uvs[i];
+                        }
+                        bufferViewId = WriteBufferViewToBuffer(
+                            outStream.Reinterpret<byte>(8),
+                            8
+                        );
+                        outStream.Dispose();
+                        break;
+                    }
+                    case VertexAttribute.BlendWeight:
+                        break;
+                    case VertexAttribute.BlendIndices:
+                        break;
+                }
+                m_Accessors[attrData.accessorId].bufferView = bufferViewId;
+            }
+            Profiler.EndSample();
             Profiler.EndSample();
         }
 
@@ -859,22 +1266,48 @@ namespace GLTFast.Export {
             m_Accessors.Add(accessor);
             return accessorId;
         }
-
 #endif // #if GLTFAST_MESH_DATA
 
         async Task<bool> BakeImages(string directory) {
-            if (m_ImagePathsToAdd != null) {
+            if (m_ImageExports != null) {
+                Dictionary<int,string> fileNameOverrides = null;
                 var imageDest = GetFinalImageDestination();
                 var overwrite = m_Settings.fileConflictResolution == FileConflictResolution.Overwrite;
                 if (!overwrite && imageDest == ImageDestination.SeparateFile) {
                     var fileExists = false;
-                    foreach (var pair in m_ImagePathsToAdd) {
-                        var assetPath = pair.Value;
-                        var fileName = Path.GetFileName(assetPath);
-                        var destPath = Path.Combine(directory,fileName);
+                    var fileNames = new HashSet<string>(
+#if NET_STANDARD
+                        m_ImageExports.Count
+#endif
+                        );
+                
+                    bool GetUniqueFileName(ref string filename) {
+                        if(fileNames.Contains(filename)) {
+                            var i = 0;
+                            var extension = Path.GetExtension(filename);
+                            var baseName = Path.GetFileNameWithoutExtension(filename);
+                            string newName;
+                            do {
+                                newName = $"{baseName}_{i++}{extension}";
+                            } while (fileNames.Contains(newName));
+
+                            filename = newName;
+                            return true;
+                        }
+                        return false;
+                    }
+                    
+                    for (var imageId = 0; imageId < m_ImageExports.Count; imageId++) {
+                        var imageExport = m_ImageExports[imageId];
+                        var fileName = Path.GetFileName(imageExport.fileName);
+                        if (GetUniqueFileName(ref fileName)) {
+                            fileNameOverrides = fileNameOverrides ?? new Dictionary<int, string>();
+                            fileNameOverrides[imageId] = fileName;
+                        }
+                        fileNames.Add(fileName);
+                        var destPath = Path.Combine(directory, fileName);
                         if (File.Exists(destPath)) {
                             fileExists = true;
-                            break;
                         }
                     }
 
@@ -895,23 +1328,26 @@ namespace GLTFast.Export {
                     }
                 }
 
-                foreach (var pair in m_ImagePathsToAdd) {
-                    var imageId = pair.Key;
-                    var assetPath = pair.Value;
+                for (var imageId = 0; imageId < m_ImageExports.Count; imageId++) {
+                    var imageExport = m_ImageExports[imageId];
                     if (imageDest == ImageDestination.MainBuffer) {
                         // TODO: Write from file to buffer stream directly
-                        var imageBytes = File.ReadAllBytes(assetPath);
-                        m_Images[imageId].bufferView = WriteBufferViewToBuffer(imageBytes); 
-                    } else if (imageDest == ImageDestination.SeparateFile) {
-                        var fileName = Path.GetFileName(assetPath);
-                        File.Copy(assetPath, Path.Combine(directory,fileName), overwrite);
+                        var imageBytes = imageExport.GetData();
+                        m_Images[imageId].bufferView = WriteBufferViewToBuffer(imageBytes);
+                    }
+                    else if (imageDest == ImageDestination.SeparateFile) {
+                        string fileName = null;
+                        if (!(fileNameOverrides != null && fileNameOverrides.TryGetValue(imageId, out fileName))) {
+                            fileName = imageExport.fileName;
+                        }
+                        imageExport.Write( Path.Combine(directory, fileName), overwrite);
                         m_Images[imageId].uri = fileName;
                     }
                     await m_DeferAgent.BreakPoint();
                 }
             }
 
-            m_ImagePathsToAdd = null;
+            m_ImageExports = null;
             return true;
         }
         
@@ -993,19 +1429,7 @@ namespace GLTFast.Export {
             }
         }
 
-        string GetJson() {
-            var stream = new MemoryStream();
-            var writer = new StreamWriter(stream);
-            m_Gltf.GltfSerialize(writer);
-            writer.Flush();
-            stream.Seek(0,SeekOrigin.Begin);
-            var reader = new StreamReader( stream );
-            var json = reader.ReadToEnd();
-            reader.Close();
-            return json;
-        }
-        
-        int AddMesh([NotNull] UnityEngine.Mesh uMesh) {
+        int AddMesh(UnityEngine.Mesh uMesh) {
             int meshId;
             
 #if !UNITY_EDITOR
@@ -1115,11 +1539,12 @@ namespace GLTFast.Export {
             m_Gltf = null;
             m_ExtensionsUsedOnly = null;
             m_ExtensionsRequired = null;
+            m_ImageExports = null;
+            m_SamplerKeys = null;
             m_UnityMaterials = null;
             m_UnityMeshes = null;
-            m_UnityTextures = null;
             m_NodeMaterials = null;
-            m_ImagePathsToAdd = null;
+            m_BufferStream?.Close();
             m_BufferStream = null;
             m_BufferPath = null;
             
@@ -1131,6 +1556,7 @@ namespace GLTFast.Export {
             m_Materials = null;
             m_Images = null;
             m_Textures = null;
+            m_Samplers = null;
             
             m_State = State.Disposed;
         }
@@ -1165,62 +1591,5 @@ namespace GLTFast.Export {
                     throw new ArgumentOutOfRangeException(nameof(format), format, null);
             }
         }
-        
-        internal struct MeshMaterialCombination {
-            readonly int m_MeshId;
-            readonly int[] m_MaterialIds;
-            
-            public MeshMaterialCombination(int meshId, int[] materialIds) {
-                m_MeshId = meshId;
-                m_MaterialIds = materialIds;
-            }
-            
-            public override bool Equals(object obj) {
-                //Check for null and compare run-time types.
-                if (obj == null || ! GetType().Equals(obj.GetType())) {
-                    return false;
-                }
-                return Equals((MeshMaterialCombination)obj);
-            }
-
-            bool Equals(MeshMaterialCombination other) {
-                return m_MeshId == other.m_MeshId && Equals(m_MaterialIds, other.m_MaterialIds);
-            }
-
-            static bool Equals(int[] a, int[] b) {
-                if (a == null && b == null) {
-                    return true;
-                }
-                if (a == null ^ b == null) {
-                    return false;
-                }
-                if (a.Length != b.Length) {
-                    return false;
-                }
-                for (var i = 0; i < a.Length; i++) {
-                    if (a[i] != b[i]) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-
-            public override int GetHashCode() {
-#if NET_STANDARD
-                return HashCode.Combine(m_MeshId, m_MaterialIds);
-#else
-                var hash = 17;
-                hash = hash * 31 + m_MeshId.GetHashCode();
-                hash = hash * 31 + m_MaterialIds.GetHashCode();
-                return hash;
-#endif
-            }
-        }
-    }
-    
-    struct AttributeData {
-        public int stream;
-        public int offset;
-        public int accessorId;
     }
 }

@@ -14,11 +14,17 @@
 //
 
 namespace GLTFast.Schema {
+    
+    /// <summary>
+    /// TextureInfo extensions
+    /// </summary>
     [System.Serializable]
     public class TextureInfoExtension {
+        
+        /// <inheritdoc cref="Extension.TextureTransform"/>
         public TextureTransform KHR_texture_transform;
 
-        public virtual void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             if(KHR_texture_transform != null) {
                 writer.AddObject();
                 writer.AddProperty("KHR_texture_transform");

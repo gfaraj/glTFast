@@ -17,6 +17,9 @@ using UnityEngine;
 
 namespace GLTFast.Export {
     static class Constants {
-        public const string version = "4.4.10";   
+        public const string version = "4.8.2";
+        
+        internal const string mimeTypePNG = "image/png";
+        internal const string mimeTypeJPG = "image/jpeg";
     }
 }

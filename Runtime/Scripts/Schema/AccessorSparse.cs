@@ -14,7 +14,10 @@
 //
 
 namespace GLTFast.Schema {
-
+    
+    /// <summary>
+    /// Sparse property of a glTF <seealso cref="Accessor"/>
+    /// </summary>
     [System.Serializable]
     public class AccessorSparse {
         /// <summary>
@@ -36,7 +39,7 @@ namespace GLTFast.Schema {
         /// </summary>
         public AccessorSparseValues values;
 
-        public void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             writer.AddProperty("count",count);
             if (indices != null) {

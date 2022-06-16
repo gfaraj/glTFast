@@ -26,14 +26,61 @@ using Texture = GLTFast.Schema.Texture;
 
 namespace GLTFast.Materials {
 
-    public class UniveralRPMaterialGenerator : ShaderGraphMaterialGenerator {
+    public class UniversalRPMaterialGenerator : ShaderGraphMaterialGenerator {
 
         static bool supportsCameraOpaqueTexture;
+        
+        static readonly int k_AlphaClip = Shader.PropertyToID("_AlphaClip");
+        static readonly int k_Surface = Shader.PropertyToID("_Surface");
 
-        public UniveralRPMaterialGenerator(UniversalRenderPipelineAsset renderPipelineAsset) {
+        public UniversalRPMaterialGenerator(UniversalRenderPipelineAsset renderPipelineAsset) {
             supportsCameraOpaqueTexture = renderPipelineAsset.supportsCameraOpaqueTexture;
         }
         
+#if USING_URP_12_OR_NEWER
+#if !UNITY_SHADER_GRAPH_12_OR_NEWER
+        protected override string GetMetallicShaderName(MetallicShaderFeatures metallicShaderFeatures) {
+            return SHADER_METALLIC;
+        }
+
+        protected override string GetSpecularShaderName(SpecularShaderFeatures features) {
+            return SHADER_SPECULAR;
+        }
+        
+        protected override string GetUnlitShaderName(UnlitShaderFeatures features) {
+            return SHADER_UNLIT;
+        }
+#endif
+
+        protected override void SetDoubleSided(Schema.Material gltfMaterial, Material material) {
+            base.SetDoubleSided(gltfMaterial,material);
+            material.SetFloat(cullPropId, (int)CullMode.Off);
+        }
+
+        protected override void SetAlphaModeMask(Schema.Material gltfMaterial, Material material) {
+            base.SetAlphaModeMask(gltfMaterial, material);
+            material.SetFloat(k_AlphaClip, 1);
+        }
+
+        protected override void SetShaderModeBlend(Schema.Material gltfMaterial, Material material) {
+            material.SetOverrideTag(TAG_RENDER_TYPE, TAG_RENDER_TYPE_TRANSPARENT);
+            material.EnableKeyword(KW_SURFACE_TYPE_TRANSPARENT);
+            material.EnableKeyword(KW_DISABLE_SSR_TRANSPARENT);
+            material.EnableKeyword(KW_ENABLE_FOG_ON_TRANSPARENT);
+            material.SetShaderPassEnabled(k_ShaderPassTransparentDepthPrepass, false);
+            material.SetShaderPassEnabled(k_ShaderPassTransparentDepthPostpass, false);
+            material.SetShaderPassEnabled(k_ShaderPassTransparentBackface, false);
+            material.SetShaderPassEnabled(k_ShaderPassRayTracingPrepass, false);
+            material.SetShaderPassEnabled(k_ShaderPassDepthOnlyPass, false);
+            material.SetFloat(srcBlendPropId, (int) BlendMode.SrcAlpha);//5
+            material.SetFloat(dstBlendPropId, (int)BlendMode.OneMinusSrcAlpha);//10
+            material.SetFloat(k_ZTestGBufferPropId, (int)CompareFunction.Equal); //3
+            material.SetFloat(k_AlphaDstBlendPropId, (int)BlendMode.OneMinusSrcAlpha);//10
+            material.SetFloat(k_Surface, 1);
+            material.SetFloat(zWritePropId, 0);
+        }
+#endif
+
         protected override ShaderMode? ApplyTransmissionShaderFeatures(Schema.Material gltfMaterial) {
             if (!supportsCameraOpaqueTexture) {
                 // Fall back to makeshift approximation via premultiply or blend 

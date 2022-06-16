@@ -66,13 +66,13 @@ The glTF 2.0 specification is fully supported, with only a few minor remarks.
 | KTX with Basis Universal compression (via [KtxUnity](https://github.com/atteneder/KtxUnity)) | ✅ | 
 | | |
 | **Texture sampler**
-| Filtering  | ✅ with [limitations](#Known-issues) | 
-| Wrap modes | ✅ | 
+| Filtering  | ✅ with [limitations](./KnownIssues.md) | ✅ with [limitations](./KnownIssues.md) |
+| Wrap modes | ✅ | ✅ |
 | | |
 | **Materials Overview** (see [details](#materials-details))
-| [Universal Render Pipeline (URP)][URP] | ✅ | 
-| [High Definition Render Pipeline (HDRP)][HDRP] | ✅ | 
-| Built-in Render Pipeline | ✅ | ☑️
+| [Universal Render Pipeline (URP)][URP] | ✅ | ☑️ |
+| [High Definition Render Pipeline (HDRP)][HDRP] | ✅ | ☑️ |
+| Built-in Render Pipeline | ✅ | ☑️ |
 | | |
 | **Topologies / Primitive Types**
 | TRIANGLES | ✅ | ✅
@@ -124,7 +124,7 @@ The glTF 2.0 specification is fully supported, with only a few minor remarks.
 | KHR_texture_transform | ✅ | ✅
 | KHR_mesh_quantization | ✅ | 
 | KHR_texture_basisu | ✅ | 
-| KHR_lights_punctual | [ℹ️][PointLights] | 
+| KHR_lights_punctual | ✅ | 
 | KHR_materials_clearcoat | [ℹ️][ClearCoat] | 
 | KHR_materials_sheen | [ℹ️][Sheen] | 
 | KHR_materials_transmission | [ℹ️][Transmission] | 
@@ -132,7 +132,7 @@ The glTF 2.0 specification is fully supported, with only a few minor remarks.
 | KHR_materials_ior | [ℹ️][IOR] | 
 | KHR_materials_specular | [ℹ️][Specular] | 
 | KHR_materials_volume | [ℹ️][Volume] | 
-| KHR_xmp |️ |
+| KHR_xmp_json_ld |️ |
 | | |
 | **Vendor**
 | <sup>1</sup>EXT_mesh_gpu_instancing | ✅ | 
@@ -150,9 +150,10 @@ Not investigated yet:
 - MSFT_packing_normalRoughnessMetallic
 - MSFT_packing_occlusionRoughnessMetallic
 
-Will not be supported:
+ Will not become supported (reason in brackets):
 
-- KHR_techniques_webgl
+- KHR_xmp (archived; prefer KHR_xmp_json_ld)
+- KHR_techniques_webgl (archived)
 - ADOBE_materials_clearcoat_specular (prefer KHR_materials_clearcoat)
 - ADOBE_materials_thin_transparency (prefer KHR_materials_transmission)
 - EXT_texture_webp (prefer KTX/basisu)
@@ -194,18 +195,27 @@ Will not be supported:
 
 ### Material Export
 
+Material export is currently only tested on the following shaders:
 
+- Universal and High Definition render pipeline
+  - `Lit` 
+  - `Unlit` 
+- Built-In render pipeline
+  - `Standard` 
+  - `Unlit` 
+
+Other shaders might (partially) work if they have similar properties (with identical names).
 
 | Material Feature              | URP<sup>1</sup> | HDRP<sup>2</sup> | Built-In<sup>3</sup> |
 |-------------------------------|-----|------|----------|
-| PBR Metallic-Roughness        | `?` | `?` | ✅ |
+| PBR Metallic-Roughness        | ✅ | ✅ | ✅ |
 | PBR Specular-Glossiness       |  |  |  |
-| Unlit                         | `?` | `?` | ✅ |
-| Normal texture                | `?` | `?` | ✅ |
-| Occlusion texture             | `?` | `?` |  |
-| Emission texture              | `?` | `?` |  |
-| Alpha modes OPAQUE/MASK/BLEND | `?` | `?` | ✅ |
-| Double sided / Two sided      | `?` | `?` | ✅ |
+| Unlit                         | ✅ | ✅ | ✅ |
+| Normal texture                | ✅ | ✅ | ✅ |
+| Occlusion texture             | ✅ | ✅ | ✅ |
+| Emission texture              | ✅ | ✅ | ✅ |
+| Alpha modes OPAQUE/MASK/BLEND | ✅ | ✅ | ✅ |
+| Double sided / Two sided      | ✅ | ✅ | ✅ |
 | Vertex colors                 | `?` | `?` | `?` |
 | Multiple UV sets              | `?` | `?` | `?` |
 | Texture Transform             | ✅ | ✅ | ✅ |
@@ -237,6 +247,7 @@ Possibly incomplete list of things that are known to not work with Entities yet:
 - Skinning
 - Morph targets
 - Cameras
+- Lights
 
 ### DOTS Setup
 
@@ -244,16 +255,6 @@ Possibly incomplete list of things that are known to not work with Entities yet:
 - Make sure to enable [Hybrid Renderer V2](https://docs.unity3d.com/Packages/com.unity.rendering.hybrid@0.11/manual/creating-a-new-hybrid-renderer-project.html)
 - Use `GltfEntityAsset` instead of `GltfAsset`
 - For customized behavior, use the `EntityInstantiator` instead of the `GameObjectInstantiator`
-
-## Known issues
-
-- <sup>1</sup>Vertex accessors (positions, normals, etc.) that are used across meshes are duplicated and result in higher memory usage and slower loading (see [this comment](https://github.com/atteneder/glTFast/issues/52#issuecomment-583837852))
-- <sup>1</sup>When using more than one sampler on one image, that image is duplicated and results in higher memory usage
-- Texture sampler minification/magnification filter limitations (see [issue][SamplerFilter]):
-  - <sup>1</sup>There's no differentiation between `minFilter` and `magFilter`. `minFilter` settings are prioritized.
-  - <sup>1</sup>`minFilter` mode `NEAREST_MIPMAP_LINEAR` is not supported and will result in `NEAREST`.
-
-<sup>1</sup>: A Unity API limitation.
 
 [AnimationMecanim]: https://github.com/atteneder/glTFast/issues/167
 [AnimationPlayables]: https://github.com/atteneder/glTFast/issues/166  
@@ -265,7 +266,6 @@ Possibly incomplete list of things that are known to not work with Entities yet:
 [MeshOpt]: https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Vendor/EXT_meshopt_compression
 [MeshOptPkg]: https://docs.unity3d.com/Packages/com.unity.meshopt.decompress@0.1/manual/index.html
 [newIssue]: https://github.com/atteneder/glTFast/issues/new
-[PointLights]: https://github.com/atteneder/glTFast/issues/17
 [RuntimeExport]: https://github.com/atteneder/glTFast/issues/259
 [SamplerFilter]: https://github.com/atteneder/glTFast/issues/61 
 [Sheen]: https://github.com/atteneder/glTFast/issues/110

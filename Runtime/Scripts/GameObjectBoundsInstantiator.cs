@@ -18,17 +18,30 @@ using UnityEngine;
 
 namespace GLTFast {
 
+    using Logging;
+    
+    /// <summary>
+    /// Generates a GameObject hierarchy from a glTF scene and provides its bounding box 
+    /// </summary>
     public class GameObjectBoundsInstantiator : GameObjectInstantiator {
 
         Dictionary<uint, Bounds> nodeBounds;
 
-        public GameObjectBoundsInstantiator(IGltfReadable gltf, Transform parent, ICodeLogger logger = null) : base(gltf,parent,logger) {}
+        /// <inheritdoc />
+        public GameObjectBoundsInstantiator(
+            IGltfReadable gltf,
+            Transform parent,
+            ICodeLogger logger = null,
+            InstantiationSettings settings = null
+            ) : base(gltf,parent,logger,settings) {}
         
+        /// <inheritdoc />
         public override void Init() {
             base.Init();
             nodeBounds = new Dictionary<uint, Bounds>();
         }
 
+        /// <inheritdoc />
         public override void AddPrimitive(
             uint nodeIndex,
             string meshName,
@@ -62,6 +75,10 @@ namespace GLTFast {
             }
         }
 
+        /// <summary>
+        /// Attempts to calculate the instance's bounds
+        /// </summary>
+        /// <returns>Instance's bounds, if calculation succeeded</returns>
         public Bounds? CalculateBounds() {
 
             if (nodeBounds == null) { return null; }

@@ -13,7 +13,7 @@
 // limitations under the License.
 //
 
-#if USING_URP || USING_HDRP
+#if USING_URP || USING_HDRP || (UNITY_SHADER_GRAPH_12_OR_NEWER && GLTFAST_BUILTIN_SHADER_GRAPH)
 #define GLTFAST_SHADER_GRAPH
 #endif
 
@@ -21,10 +21,14 @@
 
 using System;
 using System.Collections.Generic;
+using GLTFast.Logging;
 using GLTFast.Schema;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Material = UnityEngine.Material;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 namespace GLTFast.Materials {
 
@@ -62,19 +66,37 @@ namespace GLTFast.Materials {
             DoubleSided = 1<<2
         }
         
+#if !UNITY_SHADER_GRAPH_12_OR_NEWER
         [Flags]
         protected enum UnlitShaderFeatures {
             Default = 0,
             AlphaBlend = 1<<1,
             DoubleSided = 1<<2
         }
+#endif
 
-        const string SHADER_UNLIT = "Shader Graphs/glTF-unlit";
-        const string SHADER_SPECULAR = "Shader Graphs/glTF-specular";
+#if UNITY_EDITOR
+#if UNITY_SHADER_GRAPH_12_OR_NEWER || USING_HDRP_10_OR_NEWER
+        protected const string SHADER_PATH_PREFIX = "Packages/com.atteneder.gltfast/Runtime/Shader/";
+#else
+        protected const string SHADER_PATH_PREFIX = "Packages/com.atteneder.gltfast/Runtime/Shader/Legacy/";
+#endif
+#else
+        protected const string SHADER_GRAPHS = "Shader Graphs/";
+#endif
+        protected const string SHADER_METALLIC = "glTF-pbrMetallicRoughness";
+        protected const string SHADER_UNLIT = "glTF-unlit";
+        protected const string SHADER_SPECULAR = "glTF-pbrSpecularGlossiness";
 
+        
         // Keywords
         const string KW_OCCLUSION = "OCCLUSION";
         const string KW_EMISSION = "EMISSION";
+        
+        protected const string TAG_MOTION_VECTOR = "MotionVector";
+        protected const string TAG_MOTION_VECTOR_USER = "User";
+        
+        protected const string k_MotionVectorsPass = "MOTIONVECTORS";
         
         static readonly int baseColorPropId = Shader.PropertyToID("_BaseColor");
         static readonly int baseMapPropId = Shader.PropertyToID("_BaseMap");
@@ -85,105 +107,42 @@ namespace GLTFast.Materials {
         static readonly int metallicRoughnessMapScaleTransformPropId = Shader.PropertyToID("metallicRoughnessTexture_ST");
         static readonly int metallicRoughnessMapRotationPropId = Shader.PropertyToID("metallicRoughnessTextureRotation");
         static readonly int metallicRoughnessMapUVChannelPropId = Shader.PropertyToID("metallicRoughnessTextureUVChannel");
-        
+        static readonly int specularFactorPropId = Shader.PropertyToID("_SpecularFactor");
         static readonly int smoothnessPropId = Shader.PropertyToID("_Smoothness");
         protected static readonly int transmissionFactorPropId = Shader.PropertyToID("transmissionFactor");
         protected static readonly int transmissionTexturePropId = Shader.PropertyToID("_TransmittanceColorMap");
         protected static readonly int transmissionTextureScaleTransformPropId = Shader.PropertyToID("_TransmittanceColorMap_ST");
         protected static readonly int transmissionTextureRotationPropId = Shader.PropertyToID("_TransmittanceColorMapRotation");
         protected static readonly int transmissionTextureUVChannelPropId = Shader.PropertyToID("_TransmittanceColorMapUVChannel");
+
+#if USING_HDRP_10_OR_NEWER || USING_URP_12_OR_NEWER
+        // const string KW_DISABLE_DECALS = "_DISABLE_DECALS";
+        protected const string KW_DISABLE_SSR_TRANSPARENT = "_DISABLE_SSR_TRANSPARENT";
+        protected const string KW_ENABLE_FOG_ON_TRANSPARENT = "_ENABLE_FOG_ON_TRANSPARENT";
+        protected const string KW_SURFACE_TYPE_TRANSPARENT = "_SURFACE_TYPE_TRANSPARENT";
         
+        protected const string k_ShaderPassTransparentDepthPrepass = "TransparentDepthPrepass";
+        protected const string k_ShaderPassTransparentDepthPostpass = "TransparentDepthPostpass";
+        protected const string k_ShaderPassTransparentBackface = "TransparentBackface";
+        protected const string k_ShaderPassRayTracingPrepass = "RayTracingPrepass";
+        protected const string k_ShaderPassDepthOnlyPass = "DepthOnly";
+        
+        protected static readonly int k_AlphaDstBlendPropId = Shader.PropertyToID("_AlphaDstBlend");
+        protected static readonly int k_ZTestGBufferPropId = Shader.PropertyToID("_ZTestGBuffer");
+#endif
+        
+#if !UNITY_SHADER_GRAPH_12_OR_NEWER
         static Dictionary<MetallicShaderFeatures,Shader> metallicShaders = new Dictionary<MetallicShaderFeatures,Shader>();
         static Dictionary<SpecularShaderFeatures,Shader> specularShaders = new Dictionary<SpecularShaderFeatures,Shader>();
         static Dictionary<UnlitShaderFeatures,Shader> unlitShaders = new Dictionary<UnlitShaderFeatures,Shader>();
+#else
+        static Shader s_MetallicShader;
+        static Shader s_SpecularShader;
+        static Shader s_UnlitShader;
+#endif
 
         public override Material GetDefaultMaterial() {
             return GetMetallicMaterial(MetallicShaderFeatures.Default);
-        }
-
-        Material GetMetallicMaterial( MetallicShaderFeatures metallicShaderFeatures ) {
-            
-            bool doubleSided = (metallicShaderFeatures & MetallicShaderFeatures.DoubleSided) != 0;
-            
-            if(!metallicShaders.TryGetValue(metallicShaderFeatures,value: out var shader)) {
-                ShaderMode mode = (ShaderMode) (metallicShaderFeatures & MetallicShaderFeatures.ModeMask);
-#if USING_HDRP_10_OR_NEWER
-                mode = ShaderMode.Opaque;
-                doubleSided = false;
-#endif
-                // TODO: add ClearCoat support
-                bool coat = false; // (metallicShaderFeatures & MetallicShaderFeatures.ClearCoat) != 0;
-                // TODO: add sheen support
-                bool sheen = false; // (metallicShaderFeatures & MetallicShaderFeatures.Sheen) != 0;
-                
-                var shaderName = string.Format(
-                    "Shader Graphs/glTF-metallic-{0}{1}{2}{3}",
-                    mode,
-                    coat ? "-coat" : "",
-                    sheen ? "-sheen" : "",
-                    doubleSided ? "-double" : ""
-                );
-                shader = FindShader(shaderName);
-                metallicShaders[metallicShaderFeatures] = shader;
-            }
-            if(shader==null) {
-                return null;
-            }
-            var mat = new Material(shader);
-#if UNITY_EDITOR
-            mat.doubleSidedGI = doubleSided; 
-#endif
-            return mat;
-        }
-
-        Material GetUnlitMaterial(Schema.Material gltfMaterial)
-        {
-            var features = GetUnlitShaderFeatures(gltfMaterial);
-            bool doubleSided = (features & UnlitShaderFeatures.DoubleSided) != 0;
-            Shader shader = null;
-            if(!unlitShaders.TryGetValue(features, out shader)) {
-                bool alphaBlend = (features & UnlitShaderFeatures.AlphaBlend) != 0;
-                var shaderName = string.Format(
-                    "{0}{1}{2}",
-                    SHADER_UNLIT,
-                    alphaBlend ? "-Blend" : "-Opaque",
-                    doubleSided ? "-double" : ""
-                );
-                shader = FindShader(shaderName);
-                unlitShaders[features] = shader;
-            }
-            if(shader==null) {
-                return null;
-            }
-            var mat = new Material(shader);
-#if UNITY_EDITOR
-            mat.doubleSidedGI = gltfMaterial.doubleSided;
-#endif
-            return mat;
-        }
-        
-        Material GetSpecularMaterial(SpecularShaderFeatures features) {
-            bool doubleSided = (features & SpecularShaderFeatures.DoubleSided) != 0;
-            Shader shader = null;
-            if(!specularShaders.TryGetValue(features,out shader)) {
-                bool alphaBlend = (features & SpecularShaderFeatures.AlphaBlend) != 0;
-                var shaderName = string.Format(
-                    "{0}{1}{2}",
-                    SHADER_SPECULAR,
-                    alphaBlend ? "-Blend" : "-Opaque",
-                    doubleSided ? "-double" : ""
-                    );
-                shader = FindShader(shaderName);
-                specularShaders[features] = shader;
-            }
-            if(shader==null) {
-                return null;
-            }
-            var mat = new Material(shader);
-#if UNITY_EDITOR
-            mat.doubleSidedGI = doubleSided;
-#endif
-            return mat;
         }
 
         public override Material GenerateMaterial(Schema.Material gltfMaterial, IGltfReadable gltf) {
@@ -196,7 +155,7 @@ namespace GLTFast.Materials {
             if (gltfMaterial.extensions?.KHR_materials_unlit!=null) {
                 material = GetUnlitMaterial(gltfMaterial);
                 materialType = MaterialType.Unlit;
-                shaderMode = gltfMaterial.alphaModeEnum != AlphaMode.OPAQUE ? ShaderMode.Blend : ShaderMode.Opaque;
+                shaderMode = gltfMaterial.alphaModeEnum == AlphaMode.BLEND ? ShaderMode.Blend : ShaderMode.Opaque;
             } else {
                 bool isMetallicRoughness = gltfMaterial.extensions?.KHR_materials_pbrSpecularGlossiness == null;
                 if (isMetallicRoughness) {
@@ -227,7 +186,11 @@ namespace GLTFast.Materials {
                 Schema.PbrSpecularGlossiness specGloss = gltfMaterial.extensions.KHR_materials_pbrSpecularGlossiness;
                 if (specGloss != null) {
                     baseColorLinear = specGloss.diffuseColor;
+#if UNITY_SHADER_GRAPH_12_OR_NEWER
+                    material.SetVector(specularFactorPropId, specGloss.specularColor);
+#else
                     material.SetVector(specColorPropId, specGloss.specularColor);
+#endif                    
                     material.SetFloat(smoothnessPropId, specGloss.glossinessFactor);
 
                     TrySetTexture(
@@ -348,11 +311,17 @@ namespace GLTFast.Materials {
 
             if (gltfMaterial.alphaModeEnum == AlphaMode.MASK) {
                 SetAlphaModeMask(gltfMaterial, material);
+#if USING_HDRP
+                if (gltfMaterial.extensions?.KHR_materials_unlit != null) {
+                    renderQueue = RenderQueue.Transparent;
+                } else
+#endif
+                renderQueue = RenderQueue.AlphaTest;
             } else {
                 material.SetFloat(cutoffPropId, 0);
                 // double sided opaque would make errors in HDRP 7.3 otherwise
-                material.SetOverrideTag("MotionVector","User");
-                material.SetShaderPassEnabled("MOTIONVECTORS",false);
+                material.SetOverrideTag(TAG_MOTION_VECTOR,TAG_MOTION_VECTOR_USER);
+                material.SetShaderPassEnabled(k_MotionVectorsPass,false);
             }
             if (!renderQueue.HasValue) {
                 if(shaderMode == ShaderMode.Opaque) {
@@ -382,7 +351,7 @@ namespace GLTFast.Materials {
                     break;
             }
 
-            material.SetVector(baseColorPropId, baseColorLinear);
+            material.SetVector(baseColorPropId, baseColorLinear.gamma);
             
             if(gltfMaterial.emissive != Color.black) {
                 material.SetColor(emissionColorPropId, gltfMaterial.emissive);
@@ -392,10 +361,121 @@ namespace GLTFast.Materials {
             return material;
         }
 
-        protected virtual void SetDoubleSided(Schema.Material gltfMaterial, Material material) { }
+        Material GetMetallicMaterial( MetallicShaderFeatures metallicShaderFeatures ) {
+            Shader shader = GetMetallicShader(metallicShaderFeatures);
+            if(shader==null) {
+                return null;
+            }
+            var mat = new Material(shader);
+#if UNITY_EDITOR
+            mat.doubleSidedGI = (metallicShaderFeatures & MetallicShaderFeatures.DoubleSided) != 0; 
+#endif
+            return mat;
+        }
+
+        Material GetUnlitMaterial(Schema.Material gltfMaterial)
+        {
+            Shader shader = GetUnlitShader(gltfMaterial);
+            if(shader==null) {
+                return null;
+            }
+            var mat = new Material(shader);
+#if UNITY_EDITOR
+            mat.doubleSidedGI = gltfMaterial.doubleSided;
+#endif
+            return mat;
+        }
+
+        Material GetSpecularMaterial(SpecularShaderFeatures features) {
+            var shader = GetSpecularShader(features);
+            if(shader==null) {
+                return null;
+            }
+            var mat = new Material(shader);
+#if UNITY_EDITOR
+            mat.doubleSidedGI = (features & SpecularShaderFeatures.DoubleSided) != 0;
+#endif
+            return mat;
+        }
+
+        Shader GetMetallicShader(MetallicShaderFeatures metallicShaderFeatures) {
+            Shader shader;
+#if UNITY_SHADER_GRAPH_12_OR_NEWER
+            if (s_MetallicShader == null) {
+                s_MetallicShader = LoadShaderByName(SHADER_METALLIC);
+            }
+            shader = s_MetallicShader;
+#else
+            if (!metallicShaders.TryGetValue(metallicShaderFeatures, value: out shader) || shader == null) {
+                shader = LoadShaderByName(GetMetallicShaderName(metallicShaderFeatures));
+                metallicShaders[metallicShaderFeatures] = shader;
+            }
+#endif
+            return shader;
+        }
+        
+        Shader GetUnlitShader(Schema.Material gltfMaterial) {
+            Shader shader;
+#if UNITY_SHADER_GRAPH_12_OR_NEWER
+            if (s_UnlitShader == null) {
+                s_UnlitShader = LoadShaderByName(SHADER_UNLIT);
+            }
+            shader = s_UnlitShader;
+#else
+            var features = GetUnlitShaderFeatures(gltfMaterial);
+            if (!unlitShaders.TryGetValue(features, out shader) || shader == null) {
+                shader = LoadShaderByName(GetUnlitShaderName(features));
+                unlitShaders[features] = shader;
+            }
+#endif
+            return shader;
+        }
+
+        
+        Shader GetSpecularShader(SpecularShaderFeatures features) {
+            Shader shader;
+#if UNITY_SHADER_GRAPH_12_OR_NEWER
+            if (s_SpecularShader == null) {
+                s_SpecularShader = LoadShaderByName(SHADER_SPECULAR);
+            }
+            shader = s_SpecularShader;
+#else
+            if (!specularShaders.TryGetValue(features, out shader) || shader == null) {
+                shader = LoadShaderByName(GetSpecularShaderName(features));
+                specularShaders[features] = shader;
+            }
+#endif
+            return shader;
+        }
+
+        Shader LoadShaderByName(string shaderName) {
+            Shader shader;
+#if UNITY_EDITOR
+            var shaderPath = $"{SHADER_PATH_PREFIX}{shaderName}.shadergraph";
+            shader = AssetDatabase.LoadAssetAtPath<Shader>(shaderPath);
+            if (shader == null) {
+                logger?.Error($"Cannot load shader at path {shaderPath}");
+            }
+#else
+            shader = FindShader($"{SHADER_GRAPHS}{shaderName}");
+            if (shader == null) {
+                logger?.Error(LogCode.ShaderMissing,shaderName);
+            }
+#endif
+            return shader;
+        }
+
+        protected virtual void SetDoubleSided(Schema.Material gltfMaterial, Material material) {
+            material.doubleSidedGI = true;
+        }
         
         protected virtual void SetAlphaModeMask(Schema.Material gltfMaterial, Material material) {
             material.SetFloat(cutoffPropId, gltfMaterial.alphaCutoff);
+#if USING_HDRP_10_OR_NEWER || USING_URP_12_OR_NEWER
+            material.EnableKeyword(KW_ALPHATEST_ON);
+            material.SetOverrideTag(TAG_RENDER_TYPE, TAG_RENDER_TYPE_CUTOUT);
+            material.SetFloat(k_ZTestGBufferPropId, (int)CompareFunction.Equal); //3
+#endif
         }
 
         protected virtual void SetShaderModeOpaque(Schema.Material gltfMaterial, Material material) { }
@@ -472,6 +552,28 @@ namespace GLTFast.Materials {
             return feature;
         }
         
+#if !UNITY_SHADER_GRAPH_12_OR_NEWER
+        
+        protected virtual string GetMetallicShaderName(MetallicShaderFeatures metallicShaderFeatures) {
+            var doubleSided = (metallicShaderFeatures & MetallicShaderFeatures.DoubleSided) != 0;
+            var mode = (ShaderMode)(metallicShaderFeatures & MetallicShaderFeatures.ModeMask);
+            return $"{SHADER_METALLIC}-{mode}{(doubleSided ? "-double" : "")}";
+        }
+        
+        protected virtual string GetUnlitShaderName(UnlitShaderFeatures features) {
+            var doubleSided = (features & UnlitShaderFeatures.DoubleSided) != 0;
+            var alphaBlend = (features & UnlitShaderFeatures.AlphaBlend) != 0;
+            var shaderName = $"{SHADER_UNLIT}{(alphaBlend ? "-Blend" : "-Opaque")}{(doubleSided ? "-double" : "")}";
+            return shaderName;
+        }
+        
+        protected virtual string GetSpecularShaderName(SpecularShaderFeatures features) {
+            var alphaBlend = (features & SpecularShaderFeatures.AlphaBlend) != 0;
+            var doubleSided = (features & SpecularShaderFeatures.DoubleSided) != 0;
+            var shaderName = $"{SHADER_SPECULAR}{(alphaBlend ? "-Blend" : "-Opaque")}{(doubleSided ? "-double" : "")}";
+            return shaderName;
+        }
+        
         static UnlitShaderFeatures GetUnlitShaderFeatures(Schema.Material gltfMaterial) {
 
             var feature = UnlitShaderFeatures.Default;
@@ -482,6 +584,7 @@ namespace GLTFast.Materials {
             }
             return feature;
         }
+#endif
     }
 }
 #endif // GLTFAST_SHADER_GRAPH

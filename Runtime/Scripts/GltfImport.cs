@@ -35,6 +35,7 @@ using GLTFast.Jobs;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using Debug = UnityEngine.Debug;
+using Object = UnityEngine.Object;
 #if MESHOPT
 using Meshoptimizer;
 #endif
@@ -42,14 +43,21 @@ using Meshoptimizer;
 using GLTFast.Tests;
 #endif
 
+[assembly: InternalsVisibleTo("glTFastEditor")]
 [assembly: InternalsVisibleTo("glTFastEditorTests")]
 [assembly: InternalsVisibleTo("glTFast.Export")]
 
 namespace GLTFast {
 
-    using Schema;
     using Loading;
+    using Logging;
+    using Materials;
+    using Schema;
 
+    /// <summary>
+    /// Loads a glTF's content, converts it to Unity resources and is able to
+    /// feed it to an <cref>IInstantiator</cref> for instantiation.
+    /// </summary>
     public class GltfImport : IGltfReadable, IGltfBuffers {
 
         /// <summary>
@@ -75,26 +83,31 @@ namespace GLTFast {
             150_000_000;
 #endif
         
-        public const int DefaultBatchCount = 512;
+        /// <summary>
+        /// Default value for a C# Job's innerloopBatchCount parameter.
+        /// See <cref>IJobParallelForExtensions.Schedule</cref>
+        /// </summary>
+        internal const int DefaultBatchCount = 512;
 
         const string PrimitiveName = "Primitive";
 
-        public static readonly HashSet<string> supportedExtensions = new HashSet<string> {
+        static readonly HashSet<string> supportedExtensions = new HashSet<string> {
 #if DRACO_UNITY
-            Extensions.DracoMeshCompression,
+            ExtensionName.DracoMeshCompression,
 #endif
 #if KTX_UNITY
-            Extensions.TextureBasisUniversal,
+            ExtensionName.TextureBasisUniversal,
 #endif // KTX_UNITY
 #if MESHOPT
-            Extensions.MeshoptCompression,
+            ExtensionName.MeshoptCompression,
 #endif
-            Extensions.MaterialsPbrSpecularGlossiness,
-            Extensions.MaterialsUnlit,
-            Extensions.TextureTransform,
-            Extensions.MeshQuantization,
-            Extensions.MaterialsTransmission,
-            Extensions.MeshGPUInstancing,
+            ExtensionName.MaterialsPbrSpecularGlossiness,
+            ExtensionName.MaterialsUnlit,
+            ExtensionName.TextureTransform,
+            ExtensionName.MeshQuantization,
+            ExtensionName.MaterialsTransmission,
+            ExtensionName.MeshGPUInstancing,
+            ExtensionName.LightsPunctual,
         };
 
         static IDeferAgent defaultDeferAgent;
@@ -128,7 +141,7 @@ namespace GLTFast {
 #if KTX_UNITY
         Dictionary<int,Task<IDownload>> ktxDownloadTasks;
 #endif
-        Dictionary<int,Task<ITextureDownload>> textureDownloadTasks;
+        Dictionary<int,TextureDownloadBase> textureDownloadTasks;
 
         AccessorDataBase[] accessorData;
         AccessorUsage[] accessorUsage;
@@ -228,6 +241,13 @@ namespace GLTFast {
 
         ICodeLogger logger;
         
+        /// <summary>
+        /// Constructs a GltfImport instance with injectable customization objects.
+        /// </summary>
+        /// <param name="downloadProvider">Provides file access or download customization</param>
+        /// <param name="deferAgent">Provides custom update loop behavior for better frame rate control</param>
+        /// <param name="materialGenerator">Provides custom glTF to Unity material conversion</param>
+        /// <param name="logger">Provides custom message logging</param>
         public GltfImport(
             IDownloadProvider downloadProvider=null,
             IDeferAgent deferAgent=null,
@@ -238,8 +258,16 @@ namespace GLTFast {
             this.downloadProvider = downloadProvider ?? new DefaultDownloadProvider();
 
             if (deferAgent == null) {
-                if (defaultDeferAgent == null) {
-                    defaultDeferAgent = new GameObject("glTFast_DeferAgent").AddComponent<TimeBudgetPerFrameDeferAgent>(); 
+                if (defaultDeferAgent==null 
+                    || (defaultDeferAgent is Object agent && agent == null) // Cast to Object to enforce Unity Object's null check (is MonoBehavior alive?)
+                    )
+                {
+                    var defaultDeferAgentGameObject = new GameObject("glTF-StableFramerate");
+                    // Keep it across scene loads
+                    Object.DontDestroyOnLoad(defaultDeferAgentGameObject);
+                    SetDefaultDeferAgent(defaultDeferAgentGameObject.AddComponent<TimeBudgetPerFrameDeferAgent>());
+                    // Adding a DefaultDeferAgent component will make it un-register via <see cref="UnsetDefaultDeferAgent"/>
+                    defaultDeferAgentGameObject.AddComponent<DefaultDeferAgent>();
                 }
                 this.deferAgent = defaultDeferAgent;
             } else {
@@ -250,6 +278,33 @@ namespace GLTFast {
             this.logger = logger;
         }
 
+#region PublicStatic
+        /// <summary>
+        /// Sets the default <see cref="IDeferAgent"/> for subsequently
+        /// generated GltfImport instances.
+        /// </summary>
+        /// <param name="deferAgent">New default <see cref="IDeferAgent"/></param>
+        public static void SetDefaultDeferAgent(IDeferAgent deferAgent) {
+#if DEBUG
+            if (defaultDeferAgent!=null && defaultDeferAgent != deferAgent) {
+                Debug.LogWarning("GltfImport.defaultDeferAgent got overruled! Make sure there is only one default at any time", deferAgent as Object);
+            }
+#endif
+            defaultDeferAgent = deferAgent;
+        }
+
+        /// <summary>
+        /// Allows un-registering default <see cref="IDeferAgent"/>.
+        /// For example if it's no longer available.
+        /// </summary>
+        /// <param name="deferAgent"><see cref="IDeferAgent"/> in question</param>
+        public static void UnsetDefaultDeferAgent(IDeferAgent deferAgent) {
+            if (defaultDeferAgent == deferAgent) {
+                defaultDeferAgent = null;
+            }
+        }
+#endregion
+        
 #region Public
 
         /// <summary>
@@ -258,6 +313,7 @@ namespace GLTFast {
         /// </summary>
         /// <param name="url">Uniform Resource Locator. Can be a file path (using the "file://" scheme) or a web adress.</param>
         /// <param name="importSettings">Import Settings (<see cref="ImportSettings"/> for details)</param>
+        /// <returns>True if loading was successful, false otherwise</returns>
         public async Task<bool> Load( string url, ImportSettings importSettings = null ) {
             return await Load(new Uri(url,UriKind.RelativeOrAbsolute), importSettings);
         }
@@ -268,6 +324,7 @@ namespace GLTFast {
         /// </summary>
         /// <param name="url">Uniform Resource Locator. Can be a file path (using the "file://" scheme) or a web adress.</param>
         /// <param name="importSettings">Import Settings (<see cref="ImportSettings"/> for details)</param>
+        /// <returns>True if loading was successful, false otherwise</returns>
         public async Task<bool> Load( Uri url, ImportSettings importSettings = null) {
             settings = importSettings ?? new ImportSettings();
             return await LoadRoutine(url);
@@ -349,39 +406,6 @@ namespace GLTFast {
         }
         
         /// <summary>
-        /// Creates an instance of the entire glTF (all scenes).
-        /// Please prefer to instantiate the main scene or selected scenes instead.
-        /// </summary>
-        /// <param name="parent">Transform that the scenes will get parented to</param>
-        /// <returns></returns>
-        [Obsolete("Replace with InstantiateMainScene or InstantiateScene")]
-        public bool InstantiateGltf(Transform parent) {
-            var instantiator = new GameObjectInstantiator(this, parent, new ConsoleLogger());
-            var success = InstantiateGltf(instantiator);
-            return success;
-        }
-
-        /// <summary>
-        /// Instantiates the entire glTF (all scenes).
-        /// Please prefer to instantiate the main scene or selected scenes instead.
-        /// </summary>
-        /// <param name="instantiator">Instantiator implementation; Receives and processes the scenes' data</param>
-        /// <returns></returns>
-        [Obsolete("Replace with InstantiateMainScene or InstantiateScene")]
-        public bool InstantiateGltf(IInstantiator instantiator) {
-            if (!loadingDone || loadingError) return false;
-            for (int sceneIndex = 0; sceneIndex < sceneCount; sceneIndex++) {
-                InstantiateScene(instantiator, sceneIndex);
-            }
-            return true;
-        }
-
-        [Obsolete("Use Dispose instead")]
-        public void Destroy() {
-            Dispose();
-        }
-
-        /// <summary>
         /// Frees up memory by disposing all sub assets.
         /// There can be no instantiation or other element access afterwards.
         /// </summary>
@@ -424,16 +448,45 @@ namespace GLTFast {
             }
         }
 
+        /// <summary>
+        /// Number of materials
+        /// </summary>
         public int materialCount => materials?.Length ?? 0;
+        
+        /// <summary>
+        /// Number of images
+        /// </summary>
         public int imageCount => images?.Length ?? 0;
+        
+        /// <summary>
+        /// Number of textures
+        /// </summary>
         public int textureCount => textures?.Length ?? 0;
-        public int? defaultSceneIndex => gltfRoot != null && gltfRoot.scene >= 0 ? gltfRoot.scene : (int?) null; 
+        
+        /// <summary>
+        /// Default scene index
+        /// </summary>
+        public int? defaultSceneIndex => gltfRoot != null && gltfRoot.scene >= 0 ? gltfRoot.scene : (int?) null;
+        
+        /// <summary>
+        /// Number of scenes
+        /// </summary>
         public int sceneCount => gltfRoot?.scenes?.Length ?? 0;
 
+        /// <summary>
+        /// Get a glTF's scene's name by its index
+        /// </summary>
+        /// <param name="sceneIndex">glTF scene index</param>
+        /// <returns>Scene name or null</returns>
         public string GetSceneName(int sceneIndex) {
             return gltfRoot?.scenes?[sceneIndex]?.name;
         }
         
+        /// <summary>
+        /// Get a Unity Material by its glTF material index 
+        /// </summary>
+        /// <param name="index">glTF material index</param>
+        /// <returns>Corresponding Unity Material</returns>
         public UnityEngine.Material GetMaterial( int index = 0 ) {
             if(materials!=null && index >= 0 && index < materials.Length ) {
                 return materials[index];
@@ -441,6 +494,10 @@ namespace GLTFast {
             return null;
         }
 
+        /// <summary>
+        /// Returns a fallback default material that is provided by the IMaterialGenerator
+        /// </summary>
+        /// <returns></returns>
         public UnityEngine.Material GetDefaultMaterial() {
 #if UNITY_EDITOR
             if (defaultMaterial == null) {
@@ -452,6 +509,11 @@ namespace GLTFast {
 #endif
         }
         
+        /// <summary>
+        /// Returns a texture by its glTF image index
+        /// </summary>
+        /// <param name="index">glTF image index</param>
+        /// <returns>Corresponding Unity texture</returns>
         public Texture2D GetImage( int index = 0 ) {
             if(images!=null && index >= 0 && index < images.Length ) {
                 return images[index];
@@ -459,6 +521,11 @@ namespace GLTFast {
             return null;
         }
 
+        /// <summary>
+        /// Returns a texture by its glTF texture index
+        /// </summary>
+        /// <param name="index">glTF texture index</param>
+        /// <returns>Corresponding Unity texture</returns>
         public Texture2D GetTexture( int index = 0 ) {
             if(textures!=null && index >= 0 && index < textures.Length ) {
                 return textures[index];
@@ -467,11 +534,19 @@ namespace GLTFast {
         }
         
 #if UNITY_ANIMATION
+        /// <summary>
+        /// Returns all imported animation clips
+        /// </summary>
+        /// <returns>All imported animation clips</returns>
         public AnimationClip[] GetAnimationClips() {
             return animationClips;
         }
 #endif
 
+        /// <summary>
+        /// Returns all imported meshes
+        /// </summary>
+        /// <returns>All imported meshes</returns>
         public UnityEngine.Mesh[] GetMeshes() {
             if (primitives == null || primitives.Length < 1) return null;
             var result = new UnityEngine.Mesh[primitives.Length];
@@ -482,6 +557,7 @@ namespace GLTFast {
             return result;
         }
 
+        /// <inheritdoc />
         public Camera GetSourceCamera(uint index) {
             if (gltfRoot?.cameras != null && index < gltfRoot.cameras.Length) {
                 return gltfRoot.cameras[index];
@@ -489,6 +565,15 @@ namespace GLTFast {
             return null;
         }
         
+        /// <inheritdoc />
+        public LightPunctual GetSourceLightPunctual(uint index) {
+            if (gltfRoot?.extensions?.KHR_lights_punctual.lights != null && index < gltfRoot.extensions.KHR_lights_punctual.lights.Length) {
+                return gltfRoot.extensions.KHR_lights_punctual.lights[index];
+            }
+            return null;
+        }
+        
+        /// <inheritdoc />
         public Material GetSourceMaterial(int index = 0) {
             if (gltfRoot?.materials != null && index >= 0 && index < gltfRoot.materials.Length) {
                 return gltfRoot.materials[index];
@@ -496,6 +581,7 @@ namespace GLTFast {
             return null;
         }
 
+        /// <inheritdoc />
         public Texture GetSourceTexture(int index = 0) {
             if (gltfRoot?.textures != null && index >= 0 && index < gltfRoot.textures.Length) {
                 return gltfRoot.textures[index];
@@ -503,6 +589,7 @@ namespace GLTFast {
             return null;
         }
 
+        /// <inheritdoc />
         public Image GetSourceImage(int index = 0) {
             if (gltfRoot?.images != null && index >= 0 && index < gltfRoot.images.Length) {
                 return gltfRoot.images[index];
@@ -585,6 +672,12 @@ namespace GLTFast {
                 gltfRoot = JsonParser.ParseJson(json);
                 // Loading subsequent buffers and images has to start asap.
                 // That's why parsing JSON right away is *very* important. 
+            }
+            
+            if (gltfRoot == null) {
+                Debug.LogError("JsonParsingFailed");
+                logger?.Error(LogCode.JsonParsingFailed);
+                return false;
             }
 
             if(!CheckExtensionSupport(gltfRoot)) {
@@ -680,7 +773,7 @@ namespace GLTFast {
 
         async Task LoadImages( Uri baseUri ) {
             
-            if (gltfRoot.textures != null && gltfRoot.images != null && gltfRoot.materials!=null) {
+            if (gltfRoot.textures != null && gltfRoot.images != null) {
                 
                 Profiler.BeginSample("LoadImages.Prepare");
                 
@@ -701,17 +794,19 @@ namespace GLTFast {
                             imageGamma[imageIndex] = true;
                         }
                     }
-                    
-                    for(int i=0;i<gltfRoot.materials.Length;i++) {
-                        var mat = gltfRoot.materials[i];
-                        if( mat.pbrMetallicRoughness != null ) {
-                            SetImageGamma(mat.pbrMetallicRoughness.baseColorTexture);
-                        }
-                        SetImageGamma(mat.emissiveTexture);
-                        if( mat.extensions?.KHR_materials_pbrSpecularGlossiness != null )
-                        {
-                            SetImageGamma(mat.extensions.KHR_materials_pbrSpecularGlossiness.diffuseTexture);
-                            SetImageGamma(mat.extensions.KHR_materials_pbrSpecularGlossiness.specularGlossinessTexture);
+
+                    if (gltfRoot.materials != null) {
+                        for(int i=0;i<gltfRoot.materials.Length;i++) {
+                            var mat = gltfRoot.materials[i];
+                            if( mat.pbrMetallicRoughness != null ) {
+                                SetImageGamma(mat.pbrMetallicRoughness.baseColorTexture);
+                            }
+                            SetImageGamma(mat.emissiveTexture);
+                            if( mat.extensions?.KHR_materials_pbrSpecularGlossiness != null )
+                            {
+                                SetImageGamma(mat.extensions.KHR_materials_pbrSpecularGlossiness.diffuseTexture);
+                                SetImageGamma(mat.extensions.KHR_materials_pbrSpecularGlossiness.specularGlossinessTexture);
+                            }
                         }
                     }
                 }
@@ -746,40 +841,40 @@ namespace GLTFast {
                 Profiler.EndSample();
                 List<Task> imageTasks = null;
 
-                for (int i = 0; i < gltfRoot.images.Length; i++) {
-                    var img = gltfRoot.images[i];
+                for (int imageIndex = 0; imageIndex < gltfRoot.images.Length; imageIndex++) {
+                    var img = gltfRoot.images[imageIndex];
 
                     if(!string.IsNullOrEmpty(img.uri) && img.uri.StartsWith("data:")) {
                         var decodedBufferTask = DecodeEmbedBufferAsync(img.uri);
                         if (imageTasks == null) {
                             imageTasks = new List<Task>();
                         }
-                        var imageTask = LoadImageFromBuffer(decodedBufferTask, i, img);
+                        var imageTask = LoadImageFromBuffer(decodedBufferTask, imageIndex, img);
                         imageTasks.Add(imageTask);
                     } else {
                         ImageFormat imgFormat;
-                        if(imageFormats[i]==ImageFormat.Unknown) {
+                        if(imageFormats[imageIndex]==ImageFormat.Unknown) {
                             if(string.IsNullOrEmpty(img.mimeType)) {
                                 imgFormat = UriHelper.GetImageFormatFromUri(img.uri);
                             } else {
                                 imgFormat = GetImageFormatFromMimeType(img.mimeType);
                             }
-                            imageFormats[i] = imgFormat;
+                            imageFormats[imageIndex] = imgFormat;
                         } else {
-                            imgFormat=imageFormats[i];
+                            imgFormat=imageFormats[imageIndex];
                         }
 
                         if (imgFormat!=ImageFormat.Unknown) {
                             if (img.bufferView < 0) {
                                 // Not Inside buffer
                                 if(!string.IsNullOrEmpty(img.uri)) {
-                                    LoadTexture(i,UriHelper.GetUriString(img.uri,baseUri), !imageReadable[i], imgFormat==ImageFormat.KTX);
+                                    LoadImage(imageIndex,UriHelper.GetUriString(img.uri,baseUri), !imageReadable[imageIndex], imgFormat==ImageFormat.KTX);
                                 } else {
                                     logger?.Error(LogCode.MissingImageURL);
                                 }
                             } 
                         } else {
-                            logger?.Error(LogCode.ImageFormatUnknown,i.ToString(),img.uri);
+                            logger?.Error(LogCode.ImageFormatUnknown,imageIndex.ToString(),img.uri);
                         }
                     }
                 }
@@ -854,20 +949,22 @@ namespace GLTFast {
 
         async Task<bool> WaitForTextureDownloads() {
             foreach( var dl in textureDownloadTasks ) {
-                var www = await dl.Value;
+                await dl.Value.Load();
+                var www = dl.Value.download;
                 
                 if(www.success) {
                     var imageIndex = dl.Key;
-                    bool forceSampleLinear = imageGamma!=null && !imageGamma[imageIndex];
                     Texture2D txt;
                     // TODO: Loading Jpeg/PNG textures like this creates major frame stalls. Main thread is waiting
                     // on Render thread, which is occupied by Gfx.UploadTextureData for 19 ms for a 2k by 2k texture
-                    if(forceSampleLinear || settings.generateMipMaps) {
+                    if(LoadImageFromBytes(imageIndex)) {
+                        var forceSampleLinear = imageGamma!=null && !imageGamma[imageIndex];
                         txt = CreateEmptyTexture(gltfRoot.images[imageIndex], imageIndex, forceSampleLinear);
                         // TODO: Investigate for NativeArray variant to avoid `www.data`
                         txt.LoadImage(www.data,!imageReadable[imageIndex]);
                     } else {
-                        txt = www.texture;
+                        Assert.IsTrue(www is ITextureDownload);
+                        txt = ((ITextureDownload)www).texture;
                         txt.name = GetImageName(gltfRoot.images[imageIndex], imageIndex);
                     }
                     images[imageIndex] = txt;
@@ -965,7 +1062,7 @@ namespace GLTFast {
             return new Tuple<byte[], string>(data, mimeType);
         }
 
-        void LoadTexture( int index, Uri url, bool nonReadable, bool isKtx ) {
+        void LoadImage( int imageIndex, Uri url, bool nonReadable, bool isKtx ) {
 
             Profiler.BeginSample("LoadTexture");
 
@@ -975,20 +1072,34 @@ namespace GLTFast {
                 if(ktxDownloadTasks==null) {
                     ktxDownloadTasks = new Dictionary<int, Task<IDownload>>();
                 }
-                ktxDownloadTasks.Add(index, downloadTask);
+                ktxDownloadTasks.Add(imageIndex, downloadTask);
 #else
                 logger?.Error(LogCode.PackageMissing,"KtxUnity",Extensions.TextureBasisUniversal);
                 Profiler.EndSample();
                 return;
 #endif // KTX_UNITY
             } else {
-                var downloadTask = downloadProvider.RequestTexture(url,nonReadable);
+                var downloadTask = LoadImageFromBytes(imageIndex)
+                    ? (TextureDownloadBase) new TextureDownload<IDownload>(downloadProvider.Request(url))
+                    : (TextureDownloadBase) new TextureDownload<ITextureDownload>(downloadProvider.RequestTexture(url,nonReadable));
                 if(textureDownloadTasks==null) {
-                    textureDownloadTasks = new Dictionary<int, Task<ITextureDownload>>();
+                    textureDownloadTasks = new Dictionary<int, TextureDownloadBase>();
                 }
-                textureDownloadTasks.Add(index, downloadTask);
+                textureDownloadTasks.Add(imageIndex, downloadTask);
             }
             Profiler.EndSample();
+        }
+
+        /// <summary>
+        /// UnityWebRequestTexture always loads Jpegs/PNGs in sRGB color space
+        /// without mipmaps. This method figures if this is not desired and the
+        /// texture data needs to be loaded from raw bytes. 
+        /// </summary>
+        /// <param name="imageIndex">glTF image index</param>
+        /// <returns>True if image texture had to be loaded manually from bytes, false otherwise.</returns>
+        bool LoadImageFromBytes(int imageIndex) {
+            var forceSampleLinear = imageGamma!=null && !imageGamma[imageIndex];
+            return forceSampleLinear || settings.generateMipMaps;
         }
 
         async Task<bool> LoadGltfBinaryBuffer( byte[] bytes, Uri uri = null ) {
@@ -1016,10 +1127,21 @@ namespace GLTFast {
             Profiler.EndSample();
             
             while( index < bytes.Length ) {
+            
+                if (index + 8 > bytes.Length) {
+                    logger?.Error(LogCode.ChunkIncomplete);
+                    return false;
+                }
+
                 uint chLength = BitConverter.ToUInt32( bytes, index );
                 index += 4;
                 uint chType = BitConverter.ToUInt32( bytes, index );
                 index += 4;
+
+                if (index + chLength > bytes.Length) {
+                    logger?.Error(LogCode.ChunkIncomplete);
+                    return false;
+                }
 
                 if (chType == (uint)ChunkFormat.BIN) {
                     Assert.IsFalse(glbBinChunk.HasValue); // There can only be one binary chunk
@@ -1037,6 +1159,10 @@ namespace GLTFast {
                     if(!success) {
                         return false;
                     }
+                }
+                else {
+                    logger?.Error(LogCode.ChunkUnknown, chType.ToString());
+                    return false;
                 }
  
                 index += (int) chLength;
@@ -1260,22 +1386,32 @@ namespace GLTFast {
             }
 
             if(images!=null && gltfRoot.textures!=null) {
+                SamplerKey defaultKey = new SamplerKey(new Sampler());
                 textures = new Texture2D[gltfRoot.textures.Length];
-                var imageVariants = new Dictionary<int,Texture2D>[images.Length];
+                var imageVariants = new Dictionary<SamplerKey,Texture2D>[images.Length];
                 for (int textureIndex = 0; textureIndex < gltfRoot.textures.Length; textureIndex++)
                 {
                     var txt = gltfRoot.textures[textureIndex];
+                    SamplerKey key;
+                    Sampler sampler = null;
+                    if(txt.sampler>=0) {
+                        sampler = gltfRoot.samplers[txt.sampler];
+                        key = new SamplerKey(sampler);
+                    } else {
+                        key = defaultKey;
+                    }
+
                     var imageIndex = txt.GetImageIndex();
                     var img = images[imageIndex];
                     if(imageVariants[imageIndex]==null) {
                         if(txt.sampler>=0) {
-                            gltfRoot.samplers[txt.sampler].Apply(img, settings.defaultMinFilterMode, settings.defaultMagFilterMode);
+                            sampler.Apply(img, settings.defaultMinFilterMode, settings.defaultMagFilterMode);
                         }
-                        imageVariants[imageIndex] = new Dictionary<int, Texture2D>();
-                        imageVariants[imageIndex][txt.sampler] = img;
+                        imageVariants[imageIndex] = new Dictionary<SamplerKey,Texture2D>();
+                        imageVariants[imageIndex][key] = img;
                         textures[textureIndex] = img;
                     } else {
-                        if (imageVariants[imageIndex].TryGetValue(txt.sampler, out var imgVariant)) {
+                        if (imageVariants[imageIndex].TryGetValue(key, out var imgVariant)) {
                             textures[textureIndex] = imgVariant;
                         } else {
                             var newImg = Texture2D.Instantiate(img);
@@ -1284,13 +1420,10 @@ namespace GLTFast {
                             newImg.name = string.Format("{0}_sampler{1}",img.name,txt.sampler);
                             logger?.Warning(LogCode.ImageMultipleSamplers,imageIndex.ToString());
 #endif
-                            if(txt.sampler>=0) {
-                                gltfRoot.samplers[txt.sampler].Apply(newImg, settings.defaultMinFilterMode, settings.defaultMagFilterMode);
-                            }
-                            imageVariants[imageIndex][txt.sampler] = newImg;
+                            sampler?.Apply(newImg, settings.defaultMinFilterMode, settings.defaultMagFilterMode);
+                            imageVariants[imageIndex][key] = newImg;
                             textures[textureIndex] = newImg;
                         }
-                        
                     }
                 }
             }
@@ -1352,8 +1485,22 @@ namespace GLTFast {
 
             int[] parentIndex = null;
 
-            if (settings.nodeNameMethod == ImportSettings.NameImportMethod.OriginalUnique) {
-                parentIndex = CreateUniqueNames();
+            var skeletonMissing = gltfRoot.IsASkeletonMissing();
+            
+            if (gltfRoot.nodes != null && gltfRoot.nodes.Length > 0) {
+                if (settings.nodeNameMethod == ImportSettings.NameImportMethod.OriginalUnique) {
+                    parentIndex = CreateUniqueNames();
+                } else if (skeletonMissing) {
+                    parentIndex = GetParentIndices();
+                }
+                if (skeletonMissing) {
+                    for (int skinId = 0; skinId < gltfRoot.skins.Length; skinId++) {
+                        var skin = gltfRoot.skins[skinId];
+                        if (skin.skeleton < 0) {
+                            skin.skeleton = GetLowestCommonAncestorNode(skin.joints, parentIndex);
+                        }
+                    }
+                }
             }
 
 #if UNITY_ANIMATION
@@ -1645,7 +1792,7 @@ namespace GLTFast {
                             if(node.skin>=0) {
                                 var skin = gltf.skins[node.skin];
                                 // TODO: see if this can be moved to mesh creation phase / before instantiation
-                                mesh.bindposes = skinsInverseBindMatrices[node.skin];
+                                mesh.bindposes = GetBindPoses(node.skin);
                                 if (skin.skeleton >= 0) {
                                     rootJoint = (uint) skin.skeleton;
                                 }
@@ -1725,6 +1872,13 @@ namespace GLTFast {
                 {
                     instantiator.AddCamera(nodeIndex,(uint)node.camera);
                 }
+
+                if (node.extensions?.KHR_lights_punctual != null && gltf.extensions?.KHR_lights_punctual?.lights != null) {
+                    var lightIndex = node.extensions.KHR_lights_punctual.light;
+                    if (lightIndex < gltf.extensions.KHR_lights_punctual.lights.Length) {
+                        instantiator.AddLightPunctual(nodeIndex,(uint)lightIndex);
+                    }
+                }
             }
             
             Profiler.BeginSample("CreateGameObjects");
@@ -1750,6 +1904,100 @@ namespace GLTFast {
 #endif
 
             Profiler.EndSample();
+        }
+
+        Matrix4x4[] GetBindPoses(int skinId) {
+            if (skinsInverseBindMatrices == null) return null;
+            if (skinsInverseBindMatrices[skinId] != null) {
+                return skinsInverseBindMatrices[skinId];
+            }
+
+            var skin = gltfRoot.skins[skinId];
+            var result = new Matrix4x4[skin.joints.Length];
+            for (var i = 0; i < result.Length; i++) {
+                result[i] = Matrix4x4.identity;
+            }
+            skinsInverseBindMatrices[skinId] = result;
+            return result;
+        }
+
+        /// <summary>
+        /// Given a set of nodes in a hierarchy, this method finds the
+        /// lowest common ancestor node.
+        /// </summary>
+        /// <param name="nodes">Set of nodes</param>
+        /// <param name="parentIndex">Dictionary of nodes' parent indices</param>
+        /// <returns>Lowest common ancestor node of all provided nodes. -1 if it was not found</returns>
+        static int GetLowestCommonAncestorNode(IEnumerable<uint> nodes, IReadOnlyList<int> parentIndex) {
+
+            List<int> chain = null;
+            var commonAncestor = -1;
+
+            bool CompareTo(int nodeId) {
+                var nodeChain = new List<int>();
+
+                var currNodeId = nodeId;
+
+                while (currNodeId >= 0) {
+                    if (currNodeId == commonAncestor) {
+                        return true;
+                    }
+                    nodeChain.Insert(0, currNodeId);
+                    currNodeId = parentIndex[currNodeId];
+                }
+
+                if (chain == null) {
+                    chain = nodeChain;
+                }
+                else {
+                    var depth = math.min(chain.Count, nodeChain.Count);
+                    for (var i = 0; i < depth; i++) {
+                        if (chain[i] != nodeChain[i]) {
+                            if (i > 0) {
+                                chain.RemoveRange(i, chain.Count - i);
+                                break;
+                            }
+                            return false;
+                        }
+                    }
+                }
+
+                commonAncestor = chain[chain.Count - 1];
+                return true;
+            }
+
+            foreach (var nodeId in nodes) {
+                if (!CompareTo((int)nodeId)) {
+                    return -1;
+                }
+            }
+
+            // foreach (var nodeId in nodes) {
+            //     if (commonAncestor == nodeId) {
+            //         // A joint cannot be the root, so use its parent instead
+            //         commonAncestor = parentIndex[commonAncestor];
+            //         break;
+            //     }
+            // }
+
+            return commonAncestor;
+        }
+
+        int[] GetParentIndices() {
+            var parentIndex = new int[gltfRoot.nodes.Length];
+            for (var i = 0; i < parentIndex.Length; i++) {
+                parentIndex[i] = -1;
+            }
+
+            for (var i = 0; i < gltfRoot.nodes.Length; i++) {
+                if (gltfRoot.nodes[i].children != null) {
+                    foreach (var child in gltfRoot.nodes[i].children) {
+                        parentIndex[child] = i;
+                    }
+                }
+            }
+
+            return parentIndex;
         }
 
         /// <summary>
@@ -1873,12 +2121,15 @@ namespace GLTFast {
             return string.IsNullOrEmpty(img.name) ? string.Format("image_{0}",index) : img.name;
         }
 
-        private void SafeDestroy(UnityEngine.Object obj) {
-            if (Application.isPlaying) {
-                UnityEngine.Object.Destroy(obj);
+        static void SafeDestroy(Object obj) {
+#if UNITY_EDITOR
+            if (!Application.isPlaying) {
+                Object.DestroyImmediate(obj);
             }
-            else {
-                UnityEngine.Object.DestroyImmediate(obj);
+            else
+#endif
+            {
+                Object.Destroy(obj);
             }
         }
         
@@ -1977,7 +2228,9 @@ namespace GLTFast {
             if(gltf.skins!=null) {
                 skinsInverseBindMatrices = new Matrix4x4[gltf.skins.Length][];
                 foreach(var skin in gltf.skins) {
-                    SetAccessorUsage(skin.inverseBindMatrices,AccessorUsage.InverseBindMatrix);
+                    if (skin.inverseBindMatrices >= 0) {
+                        SetAccessorUsage(skin.inverseBindMatrices,AccessorUsage.InverseBindMatrix);
+                    } 
                 }
             }
 
@@ -2355,7 +2608,9 @@ namespace GLTFast {
                 {
                     Profiler.BeginSample("AssignAllAccessorData.Skin");
                     var skin = gltf.skins[s];
-                    skinsInverseBindMatrices[s] = (accessorData[skin.inverseBindMatrices] as AccessorNativeData<Matrix4x4>).data.ToArray();
+                    if (skin.inverseBindMatrices >= 0) {
+                        skinsInverseBindMatrices[s] = (accessorData[skin.inverseBindMatrices] as AccessorNativeData<Matrix4x4>).data.ToArray();
+                    }
                     Profiler.EndSample();
                     await deferAgent.BreakPoint();
                 }
@@ -2720,6 +2975,13 @@ namespace GLTFast {
 #endif // UNITY_ANIMATION
 
 #region IGltfBuffers
+        /// <summary>
+        /// Get glTF accessor and its raw data
+        /// </summary>
+        /// <param name="index">glTF accessor index</param>
+        /// <param name="accessor">De-serialized glTF accessor</param>
+        /// <param name="data">Pointer to accessor's data in memory</param>
+        /// <param name="byteStride">Element byte stride</param>
         public unsafe void GetAccessor(int index, out Accessor accessor, out void* data, out int byteStride) {
             accessor = gltfRoot.accessors[index];
             if (accessor.bufferView < 0 || accessor.bufferView >= gltfRoot.bufferViews.Length) {
@@ -2749,6 +3011,11 @@ namespace GLTFast {
             // data =  (byte*)bufferViewData.GetUnsafeReadOnlyPtr() + accessor.byteOffset;
         }
         
+        /// <summary>
+        /// Get sparse indices raw data
+        /// </summary>
+        /// <param name="sparseIndices">glTF sparse indices accessor</param>
+        /// <param name="data">Pointer to accessor's data in memory</param>
         public unsafe void GetAccessorSparseIndices(AccessorSparseIndices sparseIndices, out void* data) {
             var bufferView = gltfRoot.bufferViews[sparseIndices.bufferView];
 #if MESHOPT
@@ -2767,6 +3034,11 @@ namespace GLTFast {
             }
         }
 
+        /// <summary>
+        /// Get sparse value raw data
+        /// </summary>
+        /// <param name="sparseValues">glTF sparse values accessor</param>
+        /// <param name="data">Pointer to accessor's data in memory</param>
         public unsafe void GetAccessorSparseValues(AccessorSparseValues sparseValues, out void* data) {
             var bufferView = gltfRoot.bufferViews[sparseValues.bufferView];
 #if MESHOPT

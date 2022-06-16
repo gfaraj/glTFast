@@ -15,18 +15,21 @@
 
 using UnityEngine;
 using static Unity.Mathematics.math;
-using static Unity.Mathematics.quaternion;
 
 namespace GLTFast {
 
     using Unity.Mathematics;
 
+    /// <summary>
+    /// Mathematics helper methods
+    /// </summary>
     public static class Mathematics
     {
         /// <summary>
         /// Decomposes a 4x4 TRS matrix into separate transforms (translation * rotation * scale)
         /// Matrix may not contain skew
         /// </summary>
+        /// <param name="m">Input matrix</param>
         /// <param name="translation">Translation</param>
         /// <param name="rotation">Rotation</param>
         /// <param name="scale">Scale</param>
@@ -52,6 +55,7 @@ namespace GLTFast {
         /// Decomposes a 4x4 TRS matrix into separate transforms (translation * rotation * scale)
         /// Matrix may not contain skew
         /// </summary>
+        /// <param name="m">Input matrix</param>
         /// <param name="translation">Translation</param>
         /// <param name="rotation">Rotation</param>
         /// <param name="scale">Scale</param>
@@ -74,6 +78,7 @@ namespace GLTFast {
         /// <summary>
         /// Decomposes a 3x3 matrix into rotation and scale
         /// </summary>
+        /// <param name="m">Input matrix</param>
         /// <param name="rotation">Rotation quaternion values</param>
         /// <param name="scale">Scale</param>
         public static void Decompose( this float3x3 m, out float4 rotation, out float3 scale ) {
@@ -103,12 +108,22 @@ namespace GLTFast {
             rotation = new quaternion(rotationMatrix).value;
         }
 
+        /// <summary>
+        /// Normalizes a vector
+        /// </summary>
+        /// <param name="input">Input vector</param>
+        /// <param name="output">Normalized output vector</param>
+        /// <returns>Length/magnitude of input vector</returns>
         static float normalize(float3 input,out float3 output) {
             var len = length(input);
             output = input/len;
             return len;
         }
 
+        /// <summary>
+        /// Normalizes columns of a 3 by 3 matrix
+        /// </summary>
+        /// <param name="m">Matrix to be normalized</param>
         static void normalize(ref float3x3 m) {
             m.c0 = math.normalize(m.c0);
             m.c1 = math.normalize(m.c1);
@@ -120,6 +135,12 @@ namespace GLTFast {
             return math.dot(cross,m.c2)<0f;
         }
         
+        /// <summary>
+        /// Normalizes a vector
+        /// </summary>
+        /// <param name="input">Input vector</param>
+        /// <param name="output">Normalized output vector</param>
+        /// <returns>Length/magnitude of input vector</returns>
         public static float normalize(float2 input,out float2 output) {
             float len = math.length(input);
             output = input/len;

@@ -15,29 +15,45 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
 
 namespace GLTFast.Export {
 
+    using Logging;
+    
+    /// <summary>
+    /// Creates glTF files from GameObject hierarchies 
+    /// </summary>
     public class GameObjectExport {
 
         GltfWriter m_Writer;
-        
+        IMaterialExport m_MaterialExport;
+        GameObjectExportSettings m_Settings;
+        ICodeLogger m_Logger;
+
         /// <summary>
         /// Provides glTF export of GameObject based scenes and hierarchies.
         /// </summary>
         /// <param name="exportSettings">Export settings</param>
+        /// <param name="gameObjectExportSettings">GameObject export settings</param>
+        /// <param name="materialExport">Provides material conversion</param>
         /// <param name="deferAgent">Defer agent; decides when/if to preempt
         /// export to preserve a stable frame rate <seealso cref="IDeferAgent"/></param>
         /// <param name="logger">Interface for logging (error) messages
         /// <seealso cref="ConsoleLogger"/></param>
         public GameObjectExport(
             ExportSettings exportSettings = null,
+            GameObjectExportSettings gameObjectExportSettings = null,
+            IMaterialExport materialExport = null,
             IDeferAgent deferAgent = null,
             ICodeLogger logger = null
         ) {
+            m_Settings = gameObjectExportSettings ?? new GameObjectExportSettings();
             m_Writer = new GltfWriter(exportSettings, deferAgent, logger);
+            m_MaterialExport = materialExport ?? MaterialExport.GetDefaultMaterialExport();
+            m_Logger = logger;
         }
 
         /// <summary>
@@ -57,7 +73,7 @@ namespace GLTFast.Export {
             var success = true;
             for (var index = 0; index < gameObjects.Length; index++) {
                 var gameObject = gameObjects[index];
-                if(!gameObject.activeInHierarchy) continue;
+                if(m_Settings.onlyActiveInHierarchy && !gameObject.activeInHierarchy) continue;
                 success &= AddGameObject(gameObject,tempMaterials, out var nodeId);
                 if (nodeId >= 0) {
                     rootNodes.Add((uint)nodeId);
@@ -71,7 +87,8 @@ namespace GLTFast.Export {
         }
         
         /// <summary>
-        /// Exports the collected scenes/content as glTF and disposes this object.
+        /// Exports the collected scenes/content as glTF, writes it to a file
+        /// and disposes this object.
         /// After the export this instance cannot be re-used!
         /// </summary>
         /// <param name="path">glTF destination file path</param>
@@ -82,6 +99,20 @@ namespace GLTFast.Export {
             m_Writer = null;
             return success;
         }
+        
+        /// <summary>
+        /// Exports the collected scenes/content as glTF, writes it to a Stream
+        /// and disposes this object. Only works for self-contained glTF-Binary.
+        /// After the export this instance cannot be re-used!
+        /// </summary>
+        /// <param name="stream">glTF destination stream</param>
+        /// <returns>True if the glTF file was written successfully, false otherwise</returns>
+        public async Task<bool> SaveToStreamAndDispose(Stream stream) {
+            CertifyNotDisposed();
+            var success = await m_Writer.SaveToStreamAndDispose(stream);
+            m_Writer = null;
+            return success;
+        }
 
         void CertifyNotDisposed() {
             if (m_Writer == null) {
@@ -89,7 +120,7 @@ namespace GLTFast.Export {
             }
         }
         bool AddGameObject(GameObject gameObject, List<Material> tempMaterials, out int nodeId ) {
-            if (!gameObject.activeInHierarchy) {
+            if (m_Settings.onlyActiveInHierarchy && !gameObject.activeInHierarchy) {
                 nodeId = -1;
                 return true;
             }
@@ -133,8 +164,19 @@ namespace GLTFast.Export {
                 mesh = smr.sharedMesh;
                 smr.GetSharedMaterials(tempMaterials);
             }
+
+            var materialIds = new int[tempMaterials.Count];
+            for (var i = 0; i < tempMaterials.Count; i++) {
+                var uMaterial = tempMaterials[i];
+                if ( uMaterial!=null && m_Writer.AddMaterial(uMaterial, out var materialId, m_MaterialExport) ) {
+                    materialIds[i] = materialId;
+                } else {
+                    materialIds[i] = -1;
+                }
+            }
+
             if (mesh != null) {
-                success &= m_Writer.AddMeshToNode(nodeId,mesh,tempMaterials);
+                m_Writer.AddMeshToNode(nodeId,mesh,materialIds);
             }
             return success;
         }

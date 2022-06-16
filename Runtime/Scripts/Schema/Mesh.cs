@@ -17,8 +17,12 @@ using System;
 
 namespace GLTFast.Schema {
 
+    /// <summary>
+    /// A set of primitives to be rendered. Its global transform is defined by
+    /// a node that references it.
+    /// </summary>
     [System.Serializable]
-    public class Mesh : RootChild, ICloneable {
+    public class Mesh : NamedObject, ICloneable {
 
         /// <summary>
         /// An array of primitives, each defining geometry to be rendered with
@@ -33,8 +37,13 @@ namespace GLTFast.Schema {
         /// </summary>
         public float[] weights;
 
+        /// <inheritdoc cref="MeshExtras"/>
         public MeshExtras extras;
 
+        /// <summary>
+        /// Clones the Mesh object
+        /// </summary>
+        /// <returns>Member-wise clone</returns>
         public object Clone() {
             var clone = (Mesh)MemberwiseClone();
             if (primitives != null) {
@@ -46,7 +55,7 @@ namespace GLTFast.Schema {
             return clone;
         }
         
-        public void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             writer.AddObject();
             GltfSerializeRoot(writer);
             if (primitives != null) {
@@ -70,11 +79,18 @@ namespace GLTFast.Schema {
         }
     }
 
+    /// <summary>
+    /// Mesh specific extra data.
+    /// </summary>
     [System.Serializable]
     public class MeshExtras {
+        
+        /// <summary>
+        /// Morph targets' names
+        /// </summary>
         public string[] targetNames;
 
-        public void GltfSerialize(JsonWriter writer) {
+        internal void GltfSerialize(JsonWriter writer) {
             if (targetNames != null) {
                 writer.AddArrayProperty("targetNames", targetNames);
             }

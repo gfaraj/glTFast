@@ -1,13 +1,13 @@
 # glTFast for Unity
 
 <p align="center">
-<img src="./Documentation~/img/unity-gltf-logos.png" alt="Unity and glTF logos side by side" />
+<img src="./Documentation~/Images/unity-gltf-logos.png" alt="Unity and glTF logos side by side" />
 </p>
 
 [![openupm](https://img.shields.io/npm/v/com.atteneder.gltfast?label=openupm&registry_uri=https://package.openupm.com)](https://openupm.com/packages/com.atteneder.gltfast/)
 [![GitHub issues](https://img.shields.io/github/issues/atteneder/glTFast)](https://github.com/atteneder/glTFast/issues)
 [![GitHub license](https://img.shields.io/github/license/atteneder/glTFast)](https://github.com/atteneder/glTFast/blob/main/LICENSE.md)
-![Code coverage result](./Documentation~/img/badge_linecoverage.svg "Code coverage result badge")
+![Code coverage result](./Documentation~/Images/badge_linecoverage.svg "Code coverage result badge")
 
 *glTFast* enables use of [glTF™ (GL Transmission Format)][gltf] asset files in [Unity][unity].
 
@@ -31,13 +31,13 @@ See the [comprehensive list of supported features and extensions](./Documentatio
 There are four use-cases for glTF within Unity
 
 - Import
-  - [Runtime Import/Loading](./Documentation~/glTFast.md#runtime-importloading) in games/applications
-  - [Editor Import](./Documentation~/glTFast.md#editor-import-design-time) (i.e. import assets at design-time)
+  - [Runtime Import/Loading](./Documentation~/ImportRuntime.md) in games/applications
+  - [Editor Import](./Documentation~/ImportEditor.md) (i.e. import assets at design-time)
 - Export
-  - [Runtime Export](./Documentation~/glTFast.md#runtime-export) (save and share dynamic, user-generated 3D content)
-  - [Editor Export](./Documentation~/glTFast.md#editor-export) (Unity as glTF authoring tool)
+  - [Runtime Export](./Documentation~/ExportRuntime.md) (save and share dynamic, user-generated 3D content)
+  - [Editor Export](./Documentation~/ExportEditor.md) (Unity as glTF authoring tool)
 
-[![Schematic diagram of the four glTF workflows](./Documentation~/img/Unity-glTF-workflows.png "The four glTF workflows")][workflows]
+[![Schematic diagram of the four glTF workflows](./Documentation~/Images/Unity-glTF-workflows.png "The four glTF workflows")][workflows]
 
 Read more about the workflows in the [documentation][workflows].
 
@@ -54,7 +54,7 @@ Afterwards *glTFast* and further, optional packages are listed in the *Package M
 There are some related package that improve *glTFast* by extending its feature set.
 
 - [Draco 3D Data Compression Unity Package][DracoUnity] (provides support for [KHR_draco_mesh_compression][ExtDraco])
-- [KTX/Basis Texture Unity Package][KtxUnity] (in Beta; provides support for [KHR_texture_basisu][ExtBasisU])
+- [KTX/Basis Texture Unity Package][KtxUnity] (provides support for [KHR_texture_basisu][ExtBasisU])
 - [*meshoptimizer decompression for Unity*][Meshopt] (provides support for [EXT_meshopt_compression][ExtMeshopt])
 
 <details><summary>Alternative: Install via GIT URL</summary>
@@ -95,7 +95,7 @@ var gltf = gameObject.AddComponent<GLTFast.GltfAsset>();
 gltf.url = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF/Duck.gltf";
 ```
 
-See [Runtime Loading via Script](./Documentation~/glTFast.md#runtime-loading-via-script) in the documentation for more details and instructions how to [customize the loading behaviour](./Documentation~/glTFast.md#customize-loading-behavior) via script.
+See [Runtime Loading via Script](./Documentation~/ImportRuntime.md#runtime-loading-via-script) in the documentation for more details and instructions how to [customize the loading behaviour](./Documentation~/ImportRuntime.md#customize-loading-behavior) via script.
 
 ### Editor Import
 
@@ -105,12 +105,12 @@ Move or copy *glTF* files into your project's *Assets* folder, similar to other 
 
 *glTFast* will import them to native Unity prefabs and add them to the asset database.
 
-See [Editor Import](./Documentation~/glTFast.md#editor-import) in the documentation for details.
+See [Editor Import](./Documentation~/ImportEditor.md) in the documentation for details.
 
 ### Editor Export
 
-The main menu has a couple of [entries for glTF export](./Documentation~/glTFast.md#export-from-the-main-menu) under `File > Export` and glTFs can also be
-created [via script](./Documentation~/glTFast.md#export-via-script).
+The main menu has a couple of [entries for glTF export](./Documentation~/ExportEditor.md#export-from-the-main-menu) under `File > Export` and glTFs can also be
+created [via script](./Documentation~/ExportEditor.md#export-via-script).
 
 ## Project Setup
 
@@ -118,9 +118,9 @@ created [via script](./Documentation~/glTFast.md#export-via-script).
 
 ❗ IMPORTANT ❗
 
-*glTFast* uses custom shaders that you **have** to include in builds in order to make materials work. If materials are fine in the Unity Editor but not in builds, chances are some shaders (or variants) are missing.
+*glTFast* uses custom shader graphs that you **have** to include in builds in order to make materials work. If materials are fine in the Unity Editor but not in builds, chances are some shaders (or variants) are missing.
 
-Read the section *Materials and Shader Variants* in the [Documentation](./Documentation~/glTFast.md#materials-and-shader-variants) for details.
+Read the section *Materials and Shader Variants* in the [Documentation](./Documentation~/ProjectSetup.md#materials-and-shader-variants) for details.
 
 ## Get involved
 
@@ -134,7 +134,7 @@ Thanks to [Embibe][embibe] for sponsoring the development of skin support! ❤�
 
 ## License
 
-Copyright (c) 2020-2021 Andreas Atteneder, All Rights Reserved.
+Copyright (c) 2020-2022 Andreas Atteneder, All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use files in this repository except in compliance with the License.
@@ -161,12 +161,12 @@ limitations under the License.
 [ExtMeshopt]: https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Vendor/EXT_meshopt_compression
 [gltf-spec]: https://www.khronos.org/registry/glTF/specs/2.0/glTF-2.0.html
 [gltf]: https://www.khronos.org/gltf
-[gltfasset_component]: ./Documentation~/img/gltfasset_component.png  "Inspector showing a GltfAsset component added to a GameObject"
+[gltfasset_component]: ./Documentation~/Images/gltfasset_component.png  "Inspector showing a GltfAsset component added to a GameObject"
 [gltfast-web-demo]: https://gltf.pixel.engineer
-[import-gif]: ./Documentation~/img/import.gif  "Video showing glTF files being copied into the Assets folder and imported"
+[import-gif]: ./Documentation~/Images/import.gif  "Video showing glTF files being copied into the Assets folder and imported"
 [khronos]: https://www.khronos.org
 [KtxUnity]: https://github.com/atteneder/KtxUnity
 [Meshopt]: https://docs.unity3d.com/Packages/com.unity.meshopt.decompress@0.1/manual/index.html
 [unity]: https://unity.com
-[upm_install]: ./Documentation~/img/upm_install.png  "Unity Package Manager add menu"
-[workflows]: ./Documentation~/glTFast.md#workflows
+[upm_install]: ./Documentation~/Images/upm_install.png  "Unity Package Manager add menu"
+[workflows]: ./Documentation~/index.md#workflows
