@@ -107,4 +107,6 @@ SubShader {
     }
 }
 
+Fallback "VertexLit"
+
 }
